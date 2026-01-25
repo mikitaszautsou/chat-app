@@ -21,7 +21,7 @@ import MoreVertIcon from '@mui/icons-material/MoreVert'
 
 const STORAGE_KEY = 'ai-chat-app-chats'
 
-function ChatsScreen() {
+function ChatsScreen({ onChatClick }) {
   const [chats, setChats] = useState([])
 
   useEffect(() => {
@@ -32,11 +32,12 @@ function ChatsScreen() {
       const initialChats = [
         {
           id: Date.now(),
-          title: 'Chat with GPT-4',
-          provider: 'OpenAI',
-          lastMessage: 'Hello! How can I help you today?',
+          title: 'My First Chat',
+          provider: 'Anthropic',
+          lastMessage: 'Start chatting...',
           timestamp: new Date().toISOString(),
           messages: [],
+          model: 'claude-sonnet-4-5-20250929',
         },
       ]
       setChats(initialChats)
@@ -66,19 +67,25 @@ function ChatsScreen() {
   }
 
   const handleChatClick = (chatId) => {
-    console.log('Chat clicked:', chatId)
+    if (onChatClick) {
+      onChatClick(chatId)
+    }
   }
 
   const handleNewChat = () => {
     const newChat = {
       id: Date.now(),
       title: `New Chat ${chats.length + 1}`,
-      provider: 'Not selected',
+      provider: 'Anthropic',
       lastMessage: 'Start chatting...',
       timestamp: new Date().toISOString(),
       messages: [],
+      model: 'claude-sonnet-4-5-20250929',
     }
     setChats([newChat, ...chats])
+    if (onChatClick) {
+      onChatClick(newChat.id)
+    }
   }
 
   return (
