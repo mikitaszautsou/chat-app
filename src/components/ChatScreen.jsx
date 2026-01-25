@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, memo, useCallback, useMemo } from 'react'
 import {
   Box,
   AppBar,
@@ -49,6 +49,323 @@ import { getApiKeyForProvider } from '../utils/providerUtils'
 const generateId = () => {
   return crypto.randomUUID()
 }
+
+// Convert DeepSeek/LaTeX math delimiters to standard format
+const convertMathDelimiters = (text) => {
+  if (typeof text !== 'string') return text
+
+  // Convert display math: [ ... ] to $$ ... $$
+  // Match [ at start of line, followed by content (including nested brackets), ending with ]
+  let converted = text.replace(/^\s*\[\s*(.+?)\s*\]\s*$/gm, '$$$$1$$')
+
+  // Convert inline math: ( ... ) to $ ... $
+  // Use a more sophisticated approach to handle nested parentheses
+  // Match ( with space, followed by content with math symbols, ending with ) with space
+  converted = converted.replace(/\(\s+([^()]*(?:\([^()]*\)[^()]*)*?)\s+\)/g, (match, content) => {
+    // Only convert if content has LaTeX indicators (backslashes, math operators, or superscripts/subscripts)
+    if (/[\\^_{}]|[α-ωΑ-Ω]/.test(content)) {
+      return `$${content.trim()}$`
+    }
+    return match
+  })
+
+  return converted
+}
+
+// Memoize markdown plugins to prevent recreation on every render
+const remarkPlugins = [remarkMath]
+const rehypePlugins = [rehypeHighlight, rehypeKatex]
+
+// Memoized MessageItem component to prevent unnecessary rerenders
+const MessageItem = memo(function MessageItem({
+  message,
+  originalIndex,
+  currentChat,
+  collapsedMessages,
+  editingMessageId,
+  editText,
+  onEditTextChange,
+  onEditMessage,
+  onSaveEdit,
+  onCancelEdit,
+  onBranchFrom,
+  onDeleteMessage,
+  onToggleCollapse,
+  onBranchMenuOpen,
+}) {
+  const hasMultipleBranches = message.children && message.children.length > 1
+  const currentChildId = currentChat.currentBranchPath[originalIndex + 1]
+
+  const getMessagePreview = (content, maxLength = 150) => {
+    let text = ''
+    if (typeof content === 'string') {
+      text = content
+    } else if (Array.isArray(content)) {
+      const textBlocks = content.filter(block => block.type === 'text')
+      text = textBlocks.map(block => block.text).join(' ')
+    }
+
+    if (text.length > maxLength) {
+      return text.substring(0, maxLength) + '...'
+    }
+    return text
+  }
+
+  const renderMessageContent = (content, isCollapsed = false) => {
+    if (isCollapsed) {
+      const preview = getMessagePreview(content)
+      return (
+        <Typography variant="body2" sx={{ color: 'text.secondary', fontStyle: 'italic' }}>
+          {preview}
+        </Typography>
+      )
+    }
+    if (typeof content === 'string') {
+      return (
+        <Box sx={{ '& p': { margin: 0 }, '& pre': { bgcolor: 'grey.100', p: 1, borderRadius: 1, overflow: 'auto' } }}>
+          <ReactMarkdown
+            remarkPlugins={remarkPlugins}
+            rehypePlugins={rehypePlugins}
+          >
+            {convertMathDelimiters(content)}
+          </ReactMarkdown>
+        </Box>
+      )
+    }
+
+    if (Array.isArray(content)) {
+      const thinkingBlocks = content.filter(block => block.type === 'thinking')
+      const textBlocks = content.filter(block => block.type === 'text')
+
+      return (
+        <>
+          {/* Render thinking blocks first, but only once */}
+          {thinkingBlocks.length > 0 && (
+            <Box sx={{ mb: 2 }}>
+              {thinkingBlocks.map((block, index) => (
+                <Box key={`thinking-${index}`} sx={{ mb: 1 }}>
+                  <Chip
+                    label="Thinking"
+                    size="small"
+                    sx={{ mb: 1 }}
+                    color="primary"
+                    variant="outlined"
+                  />
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: 'text.secondary',
+                      fontStyle: 'italic',
+                      whiteSpace: 'pre-wrap',
+                      pl: 2,
+                      borderLeft: '2px solid',
+                      borderColor: 'primary.main',
+                    }}
+                  >
+                    {block.thinking}
+                  </Typography>
+                </Box>
+              ))}
+            </Box>
+          )}
+
+          {/* Render text blocks with markdown */}
+          {textBlocks.map((block, index) => (
+            <Box
+              key={`text-${index}`}
+              sx={{
+                '& p': { margin: 0, marginBottom: 1 },
+                '& pre': { bgcolor: 'grey.100', p: 1, borderRadius: 1, overflow: 'auto', my: 1 },
+                '& code': { bgcolor: 'grey.100', px: 0.5, py: 0.25, borderRadius: 0.5, fontSize: '0.9em' },
+                '& pre code': { bgcolor: 'transparent', p: 0 },
+                '& ul, & ol': { marginTop: 0.5, marginBottom: 0.5, paddingLeft: 3 },
+                '& h1, & h2, & h3, & h4, & h5, & h6': { marginTop: 1, marginBottom: 0.5 },
+              }}
+            >
+              <ReactMarkdown
+                remarkPlugins={remarkPlugins}
+                rehypePlugins={rehypePlugins}
+              >
+                {convertMathDelimiters(block.text)}
+              </ReactMarkdown>
+            </Box>
+          ))}
+        </>
+      )
+    }
+
+    return null
+  }
+
+  return (
+    <Box key={message.id}>
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start',
+          mb: 1,
+        }}
+      >
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: message.role === 'user' ? 'row-reverse' : 'row',
+            alignItems: 'flex-start',
+            width: '100%',
+          }}
+        >
+          <Avatar
+            sx={{
+              bgcolor: message.role === 'user' ? 'primary.main' : 'secondary.main',
+              mx: 1,
+            }}
+          >
+            {message.role === 'user' ? <PersonIcon /> : <SmartToyIcon />}
+          </Avatar>
+          <Box>
+            <Paper
+              sx={{
+                p: 2,
+                bgcolor: message.isError ? 'error.light' : message.role === 'user' ? 'primary.light' : 'white',
+              }}
+            >
+              {editingMessageId === message.id ? (
+                <Box>
+                  <TextField
+                    fullWidth
+                    multiline
+                    value={editText}
+                    onChange={onEditTextChange}
+                    autoFocus
+                    variant="outlined"
+                    sx={{ mb: 1 }}
+                  />
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    <Button
+                      size="small"
+                      variant="contained"
+                      startIcon={<SaveIcon />}
+                      onClick={onSaveEdit}
+                    >
+                      Save
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<CancelIcon />}
+                      onClick={onCancelEdit}
+                    >
+                      Cancel
+                    </Button>
+                  </Box>
+                </Box>
+              ) : (
+                <>
+                  {renderMessageContent(message.content, collapsedMessages.has(message.id))}
+                  {message.edited && (
+                    <Typography variant="caption" sx={{ color: 'text.secondary', fontStyle: 'italic', display: 'block', mt: 0.5 }}>
+                      (edited)
+                    </Typography>
+                  )}
+                </>
+              )}
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 1 }}>
+                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                  {new Date(message.timestamp).toLocaleTimeString()}
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 0.5 }}>
+                  {hasMultipleBranches && (
+                    <Tooltip title="Multiple branches">
+                      <Chip
+                        icon={<CallSplitIcon />}
+                        label={message.children.length}
+                        size="small"
+                        color="primary"
+                        variant="outlined"
+                        onClick={(e) => onBranchMenuOpen(e, message)}
+                        sx={{ cursor: 'pointer' }}
+                      />
+                    </Tooltip>
+                  )}
+                  <Tooltip title="Branch from here">
+                    <IconButton
+                      size="small"
+                      onClick={() => onBranchFrom(message.id)}
+                      sx={{ ml: 0.5 }}
+                    >
+                      <CallSplitIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  {editingMessageId !== message.id && (
+                    <Tooltip title={collapsedMessages.has(message.id) ? "Expand message" : "Collapse message"}>
+                      <IconButton
+                        size="small"
+                        onClick={() => onToggleCollapse(message.id)}
+                        sx={{ ml: 0.5 }}
+                      >
+                        {collapsedMessages.has(message.id) ? (
+                          <ExpandMoreIcon fontSize="small" />
+                        ) : (
+                          <ExpandLessIcon fontSize="small" />
+                        )}
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  {message.role === 'user' && editingMessageId !== message.id && (
+                    <Tooltip title="Edit message">
+                      <IconButton
+                        size="small"
+                        onClick={() => onEditMessage(message)}
+                        sx={{ ml: 0.5 }}
+                      >
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  {editingMessageId !== message.id && (
+                    <Tooltip title="Delete message">
+                      <IconButton
+                        size="small"
+                        onClick={() => onDeleteMessage(message)}
+                        sx={{ ml: 0.5 }}
+                        color="error"
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                </Box>
+              </Box>
+            </Paper>
+          </Box>
+        </Box>
+      </Box>
+
+      {/* Branch indicator - show when there are multiple branches */}
+      {hasMultipleBranches && (
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start',
+            mb: 2,
+            ml: message.role === 'user' ? 0 : 7,
+            mr: message.role === 'user' ? 7 : 0,
+          }}
+        >
+          <Chip
+            icon={<CallSplitIcon />}
+            label={`Branch ${message.children.indexOf(currentChildId) + 1} of ${message.children.length}`}
+            size="small"
+            color="info"
+            variant="filled"
+            onClick={(e) => onBranchMenuOpen(e, message)}
+            sx={{ cursor: 'pointer' }}
+          />
+        </Box>
+      )}
+    </Box>
+  )
+})
 
 function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange }) {
   const [currentChat, setCurrentChat] = useState(null)
@@ -118,7 +435,7 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
     }
   }, [currentChat?.provider])
 
-  const updateChat = async (updatedChat) => {
+  const updateChat = useCallback(async (updatedChat) => {
     try {
       console.log('💾 Saving chat:', {
         chatId: updatedChat.id,
@@ -132,7 +449,7 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
     } catch (error) {
       console.error('Error updating chat:', error)
     }
-  }
+  }, [])
 
   // Migrate old chats to new branching structure
   const migrateChat = (chat) => {
@@ -192,29 +509,6 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
     }
   }
 
-  // Get messages in current branch path
-  const getCurrentBranchMessages = () => {
-    if (!currentChat || !currentChat.messagesMap) return []
-
-    console.log('📖 Getting current branch messages:', {
-      branchPath: currentChat.currentBranchPath,
-      messagesMapKeys: Object.keys(currentChat.messagesMap)
-    })
-
-    const messages = currentChat.currentBranchPath
-      .map(id => {
-        const msg = currentChat.messagesMap[id]
-        if (!msg) {
-          console.warn('Message not found in map:', id)
-        }
-        return msg
-      })
-      .filter(Boolean)
-
-    console.log('📖 Returning messages:', messages.map(m => ({ id: m.id, role: m.role })))
-    return messages
-  }
-
   // Get the last message ID in current branch
   const getLastMessageId = () => {
     if (!currentChat || !currentChat.currentBranchPath || currentChat.currentBranchPath.length === 0) {
@@ -224,7 +518,9 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
   }
 
   // Handle branching from a specific message
-  const handleBranchFrom = async (messageId) => {
+  const handleBranchFrom = useCallback(async (messageId) => {
+    if (!currentChat) return
+
     // Find the index of the message in current branch
     const messageIndex = currentChat.currentBranchPath.indexOf(messageId)
     if (messageIndex === -1) return
@@ -239,10 +535,12 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
 
     await updateChat(updatedChat)
     setBranchMenuAnchor(null)
-  }
+  }, [currentChat])
 
   // Switch to a different branch (child)
-  const handleSwitchToBranch = async (childMessageId) => {
+  const handleSwitchToBranch = useCallback(async (childMessageId) => {
+    if (!currentChat) return
+
     console.log('=== SWITCHING TO BRANCH ===')
     console.log('Target message ID:', childMessageId)
     console.log('Current messagesMap keys:', Object.keys(currentChat.messagesMap))
@@ -294,17 +592,17 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
     await updateChat(updatedChat)
     console.log('Branch switched and saved')
     setBranchMenuAnchor(null)
-  }
+  }, [currentChat])
 
-  const handleModelMenuOpen = (event) => {
+  const handleModelMenuOpen = useCallback((event) => {
     setModelMenuAnchor(event.currentTarget)
-  }
+  }, [])
 
-  const handleModelMenuClose = () => {
+  const handleModelMenuClose = useCallback(() => {
     setModelMenuAnchor(null)
-  }
+  }, [])
 
-  const handleModelChange = async (modelId) => {
+  const handleModelChange = useCallback(async (modelId) => {
     if (!currentChat) return
 
     const updatedChat = {
@@ -313,10 +611,10 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
     }
 
     await updateChat(updatedChat)
-    handleModelMenuClose()
-  }
+    setModelMenuAnchor(null)
+  }, [currentChat])
 
-  const handleEditMessage = (message) => {
+  const handleEditMessage = useCallback((message) => {
     setEditingMessageId(message.id)
     // Extract text from message content
     const text = typeof message.content === 'string'
@@ -326,9 +624,9 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
           .map(c => c.text)
           .join('\n')
     setEditText(text)
-  }
+  }, [])
 
-  const handleSaveEdit = async () => {
+  const handleSaveEdit = useCallback(async () => {
     if (!currentChat || !editingMessageId || !editText.trim()) return
 
     const editedMessage = currentChat.messagesMap[editingMessageId]
@@ -488,19 +786,19 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
       setIsLoading(false)
       setStreamingMessage(null)
     }
-  }
+  }, [currentChat, editingMessageId, editText])
 
-  const handleCancelEdit = () => {
+  const handleCancelEdit = useCallback(() => {
     setEditingMessageId(null)
     setEditText('')
-  }
+  }, [])
 
-  const handleDeleteMessage = (message) => {
+  const handleDeleteMessage = useCallback((message) => {
     setMessageToDelete(message)
     setDeleteDialogOpen(true)
-  }
+  }, [])
 
-  const handleConfirmDelete = async () => {
+  const handleConfirmDelete = useCallback(async () => {
     if (!currentChat || !messageToDelete) return
 
     // Get all descendants of this message
@@ -554,14 +852,14 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
     await updateChat(updatedChat)
     setDeleteDialogOpen(false)
     setMessageToDelete(null)
-  }
+  }, [currentChat, messageToDelete])
 
-  const handleCancelDelete = () => {
+  const handleCancelDelete = useCallback(() => {
     setDeleteDialogOpen(false)
     setMessageToDelete(null)
-  }
+  }, [])
 
-  const handleToggleCollapse = (messageId) => {
+  const handleToggleCollapse = useCallback((messageId) => {
     setCollapsedMessages(prev => {
       const newSet = new Set(prev)
       if (newSet.has(messageId)) {
@@ -571,9 +869,9 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
       }
       return newSet
     })
-  }
+  }, [])
 
-  const handleSendMessage = async () => {
+  const handleSendMessage = useCallback(async () => {
     if (!inputMessage.trim() || isLoading || !currentChat) return
 
     const userMessageId = generateId()
@@ -752,108 +1050,35 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
       setIsLoading(false)
       setStreamingMessage(null)
     }
-  }
+  }, [inputMessage, isLoading, currentChat])
 
-  const getMessagePreview = (content, maxLength = 150) => {
-    let text = ''
-    if (typeof content === 'string') {
-      text = content
-    } else if (Array.isArray(content)) {
-      const textBlocks = content.filter(block => block.type === 'text')
-      text = textBlocks.map(block => block.text).join(' ')
-    }
+  // Add callback for branch menu opening
+  const handleBranchMenuOpen = useCallback((e, message) => {
+    setSelectedMessageForBranch(message)
+    setBranchMenuAnchor(e.currentTarget)
+  }, [])
 
-    if (text.length > maxLength) {
-      return text.substring(0, maxLength) + '...'
-    }
-    return text
-  }
+  // Add callback for edit text change
+  const handleEditTextChange = useCallback((e) => {
+    setEditText(e.target.value)
+  }, [])
 
-  const renderMessageContent = (content, isCollapsed = false) => {
-    if (isCollapsed) {
-      const preview = getMessagePreview(content)
-      return (
-        <Typography variant="body2" sx={{ color: 'text.secondary', fontStyle: 'italic' }}>
-          {preview}
-        </Typography>
-      )
-    }
-    if (typeof content === 'string') {
-      return (
-        <Box sx={{ '& p': { margin: 0 }, '& pre': { bgcolor: 'grey.100', p: 1, borderRadius: 1, overflow: 'auto' } }}>
-          <ReactMarkdown
-            remarkPlugins={[remarkMath]}
-            rehypePlugins={[rehypeHighlight, rehypeKatex]}
-          >
-            {content}
-          </ReactMarkdown>
-        </Box>
-      )
-    }
+  // Memoize the current branch messages to avoid recalculation on every render
+  const currentBranchMessages = useMemo(() => {
+    if (!currentChat || !currentChat.messagesMap) return []
 
-    if (Array.isArray(content)) {
-      const thinkingBlocks = content.filter(block => block.type === 'thinking')
-      const textBlocks = content.filter(block => block.type === 'text')
+    const messages = currentChat.currentBranchPath
+      .map(id => {
+        const msg = currentChat.messagesMap[id]
+        if (!msg) {
+          console.warn('Message not found in map:', id)
+        }
+        return msg
+      })
+      .filter(Boolean)
 
-      return (
-        <>
-          {/* Render thinking blocks first, but only once */}
-          {thinkingBlocks.length > 0 && (
-            <Box sx={{ mb: 2 }}>
-              {thinkingBlocks.map((block, index) => (
-                <Box key={`thinking-${index}`} sx={{ mb: 1 }}>
-                  <Chip
-                    label="Thinking"
-                    size="small"
-                    sx={{ mb: 1 }}
-                    color="primary"
-                    variant="outlined"
-                  />
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      color: 'text.secondary',
-                      fontStyle: 'italic',
-                      whiteSpace: 'pre-wrap',
-                      pl: 2,
-                      borderLeft: '2px solid',
-                      borderColor: 'primary.main',
-                    }}
-                  >
-                    {block.thinking}
-                  </Typography>
-                </Box>
-              ))}
-            </Box>
-          )}
-
-          {/* Render text blocks with markdown */}
-          {textBlocks.map((block, index) => (
-            <Box
-              key={`text-${index}`}
-              sx={{
-                '& p': { margin: 0, marginBottom: 1 },
-                '& pre': { bgcolor: 'grey.100', p: 1, borderRadius: 1, overflow: 'auto', my: 1 },
-                '& code': { bgcolor: 'grey.100', px: 0.5, py: 0.25, borderRadius: 0.5, fontSize: '0.9em' },
-                '& pre code': { bgcolor: 'transparent', p: 0 },
-                '& ul, & ol': { marginTop: 0.5, marginBottom: 0.5, paddingLeft: 3 },
-                '& h1, & h2, & h3, & h4, & h5, & h6': { marginTop: 1, marginBottom: 0.5 },
-              }}
-            >
-              <ReactMarkdown
-                remarkPlugins={[remarkMath]}
-                rehypePlugins={[rehypeHighlight, rehypeKatex]}
-              >
-                {block.text}
-              </ReactMarkdown>
-            </Box>
-          ))}
-        </>
-      )
-    }
-
-    return null
-  }
+    return messages
+  }, [currentChat])
 
   if (!currentChat) {
     return (
@@ -954,10 +1179,10 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
                     }}
                   >
                     <ReactMarkdown
-                      remarkPlugins={[remarkMath]}
-                      rehypePlugins={[rehypeHighlight, rehypeKatex]}
+                      remarkPlugins={remarkPlugins}
+                      rehypePlugins={rehypePlugins}
                     >
-                      {streamingMessage.content}
+                      {convertMathDelimiters(streamingMessage.content)}
                     </ReactMarkdown>
                   </Box>
                 )}
@@ -967,189 +1192,28 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
           </Box>
         )}
 
-        {(() => {
-          const messages = getCurrentBranchMessages()
-          return [...messages].reverse().map((message, index) => {
-            const originalIndex = messages.length - 1 - index
-            const hasMultipleBranches = message.children && message.children.length > 1
-            const currentChildId = currentChat.currentBranchPath[originalIndex + 1]
-
+        {[...currentBranchMessages].reverse().map((message, index) => {
+          const originalIndex = currentBranchMessages.length - 1 - index
           return (
-            <Box key={message.id}>
-              <Box
-                sx={{
-                  display: 'flex',
-                  justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start',
-                  mb: 1,
-                }}
-              >
-                <Box
-                  sx={{
-                    display: 'flex',
-                    flexDirection: message.role === 'user' ? 'row-reverse' : 'row',
-                    alignItems: 'flex-start',
-                    width: '100%',
-                  }}
-                >
-                  <Avatar
-                    sx={{
-                      bgcolor: message.role === 'user' ? 'primary.main' : 'secondary.main',
-                      mx: 1,
-                    }}
-                  >
-                    {message.role === 'user' ? <PersonIcon /> : <SmartToyIcon />}
-                  </Avatar>
-                  <Box>
-                    <Paper
-                      sx={{
-                        p: 2,
-                        bgcolor: message.isError ? 'error.light' : message.role === 'user' ? 'primary.light' : 'white',
-                      }}
-                    >
-                      {editingMessageId === message.id ? (
-                        <Box>
-                          <TextField
-                            fullWidth
-                            multiline
-                            value={editText}
-                            onChange={(e) => setEditText(e.target.value)}
-                            autoFocus
-                            variant="outlined"
-                            sx={{ mb: 1 }}
-                          />
-                          <Box sx={{ display: 'flex', gap: 1 }}>
-                            <Button
-                              size="small"
-                              variant="contained"
-                              startIcon={<SaveIcon />}
-                              onClick={handleSaveEdit}
-                            >
-                              Save
-                            </Button>
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              startIcon={<CancelIcon />}
-                              onClick={handleCancelEdit}
-                            >
-                              Cancel
-                            </Button>
-                          </Box>
-                        </Box>
-                      ) : (
-                        <>
-                          {renderMessageContent(message.content, collapsedMessages.has(message.id))}
-                          {message.edited && (
-                            <Typography variant="caption" sx={{ color: 'text.secondary', fontStyle: 'italic', display: 'block', mt: 0.5 }}>
-                              (edited)
-                            </Typography>
-                          )}
-                        </>
-                      )}
-                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 1 }}>
-                        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                          {new Date(message.timestamp).toLocaleTimeString()}
-                        </Typography>
-                        <Box sx={{ display: 'flex', gap: 0.5 }}>
-                          {hasMultipleBranches && (
-                            <Tooltip title="Multiple branches">
-                              <Chip
-                                icon={<CallSplitIcon />}
-                                label={message.children.length}
-                                size="small"
-                                color="primary"
-                                variant="outlined"
-                                onClick={(e) => {
-                                  setSelectedMessageForBranch(message)
-                                  setBranchMenuAnchor(e.currentTarget)
-                                }}
-                                sx={{ cursor: 'pointer' }}
-                              />
-                            </Tooltip>
-                          )}
-                          <Tooltip title="Branch from here">
-                            <IconButton
-                              size="small"
-                              onClick={() => handleBranchFrom(message.id)}
-                              sx={{ ml: 0.5 }}
-                            >
-                              <CallSplitIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                          {editingMessageId !== message.id && (
-                            <Tooltip title={collapsedMessages.has(message.id) ? "Expand message" : "Collapse message"}>
-                              <IconButton
-                                size="small"
-                                onClick={() => handleToggleCollapse(message.id)}
-                                sx={{ ml: 0.5 }}
-                              >
-                                {collapsedMessages.has(message.id) ? (
-                                  <ExpandMoreIcon fontSize="small" />
-                                ) : (
-                                  <ExpandLessIcon fontSize="small" />
-                                )}
-                              </IconButton>
-                            </Tooltip>
-                          )}
-                          {message.role === 'user' && editingMessageId !== message.id && (
-                            <Tooltip title="Edit message">
-                              <IconButton
-                                size="small"
-                                onClick={() => handleEditMessage(message)}
-                                sx={{ ml: 0.5 }}
-                              >
-                                <EditIcon fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-                          )}
-                          {editingMessageId !== message.id && (
-                            <Tooltip title="Delete message">
-                              <IconButton
-                                size="small"
-                                onClick={() => handleDeleteMessage(message)}
-                                sx={{ ml: 0.5 }}
-                                color="error"
-                              >
-                                <DeleteIcon fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-                          )}
-                        </Box>
-                      </Box>
-                    </Paper>
-                  </Box>
-                </Box>
-              </Box>
-
-              {/* Branch indicator - show when there are multiple branches */}
-              {hasMultipleBranches && (
-                <Box
-                  sx={{
-                    display: 'flex',
-                    justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start',
-                    mb: 2,
-                    ml: message.role === 'user' ? 0 : 7,
-                    mr: message.role === 'user' ? 7 : 0,
-                  }}
-                >
-                  <Chip
-                    icon={<CallSplitIcon />}
-                    label={`Branch ${message.children.indexOf(currentChildId) + 1} of ${message.children.length}`}
-                    size="small"
-                    color="info"
-                    variant="filled"
-                    onClick={(e) => {
-                      setSelectedMessageForBranch(message)
-                      setBranchMenuAnchor(e.currentTarget)
-                    }}
-                    sx={{ cursor: 'pointer' }}
-                  />
-                </Box>
-              )}
-            </Box>
+            <MessageItem
+              key={message.id}
+              message={message}
+              originalIndex={originalIndex}
+              currentChat={currentChat}
+              collapsedMessages={collapsedMessages}
+              editingMessageId={editingMessageId}
+              editText={editText}
+              onEditTextChange={handleEditTextChange}
+              onEditMessage={handleEditMessage}
+              onSaveEdit={handleSaveEdit}
+              onCancelEdit={handleCancelEdit}
+              onBranchFrom={handleBranchFrom}
+              onDeleteMessage={handleDeleteMessage}
+              onToggleCollapse={handleToggleCollapse}
+              onBranchMenuOpen={handleBranchMenuOpen}
+            />
           )
-        })
-        })()}
+        })}
       </Box>
 
       {/* Branch selection menu */}
