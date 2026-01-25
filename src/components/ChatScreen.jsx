@@ -10,14 +10,28 @@ import {
   Avatar,
   CircularProgress,
   Chip,
+  Menu,
+  MenuItem,
+  Tooltip,
+  Badge,
 } from '@mui/material'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import SendIcon from '@mui/icons-material/Send'
 import PersonIcon from '@mui/icons-material/Person'
 import SmartToyIcon from '@mui/icons-material/SmartToy'
+import CallSplitIcon from '@mui/icons-material/CallSplit'
+import MoreVertIcon from '@mui/icons-material/MoreVert'
+import ReactMarkdown from 'react-markdown'
+import rehypeHighlight from 'rehype-highlight'
+import 'highlight.js/styles/github.css'
 import { createProvider } from '../providers'
 
 const STORAGE_KEY = 'ai-chat-app-chats'
+
+// Generate unique ID for messages
+const generateId = () => {
+  return crypto.randomUUID()
+}
 
 function ChatScreen({ chatId, onBack }) {
   const [chats, setChats] = useState([])
@@ -25,15 +39,27 @@ function ChatScreen({ chatId, onBack }) {
   const [inputMessage, setInputMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [streamingMessage, setStreamingMessage] = useState(null)
+  const [branchMenuAnchor, setBranchMenuAnchor] = useState(null)
+  const [selectedMessageForBranch, setSelectedMessageForBranch] = useState(null)
   const messagesEndRef = useRef(null)
 
   useEffect(() => {
     const savedChats = localStorage.getItem(STORAGE_KEY)
     if (savedChats) {
       const parsedChats = JSON.parse(savedChats)
-      setChats(parsedChats)
       const chat = parsedChats.find(c => c.id === chatId)
-      setCurrentChat(chat)
+      if (chat) {
+        const migratedChat = migrateChat(chat)
+        setCurrentChat(migratedChat)
+        setChats(parsedChats)
+
+        // Save migrated chat back to storage if migration occurred
+        if (!chat.messagesMap && migratedChat.messagesMap) {
+          const updatedChats = parsedChats.map(c => c.id === chatId ? migratedChat : c)
+          setChats(updatedChats)
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedChats))
+        }
+      }
     }
   }, [chatId])
 
@@ -48,33 +74,174 @@ function ChatScreen({ chatId, onBack }) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedChats))
   }
 
+  // Migrate old chats to new branching structure
+  const migrateChat = (chat) => {
+    if (!chat.messages || chat.messages.length === 0) {
+      return { ...chat, messagesMap: {}, rootMessageIds: [], currentBranchPath: [] }
+    }
+
+    // Check if already migrated
+    if (chat.messagesMap) {
+      return chat
+    }
+
+    const messagesMap = {}
+    const rootMessageIds = []
+    const currentBranchPath = []
+
+    chat.messages.forEach((msg, index) => {
+      const id = generateId()
+      const parentId = index > 0 ? currentBranchPath[index - 1] : null
+
+      messagesMap[id] = {
+        id,
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.timestamp,
+        isError: msg.isError,
+        parentId,
+        children: [],
+      }
+
+      if (parentId) {
+        messagesMap[parentId].children.push(id)
+      } else {
+        rootMessageIds.push(id)
+      }
+
+      currentBranchPath.push(id)
+    })
+
+    return {
+      ...chat,
+      messagesMap,
+      rootMessageIds,
+      currentBranchPath,
+      messages: undefined, // Remove old flat array
+    }
+  }
+
+  // Get messages in current branch path
+  const getCurrentBranchMessages = () => {
+    if (!currentChat || !currentChat.messagesMap) return []
+
+    return currentChat.currentBranchPath.map(id => currentChat.messagesMap[id]).filter(Boolean)
+  }
+
+  // Get the last message ID in current branch
+  const getLastMessageId = () => {
+    if (!currentChat || !currentChat.currentBranchPath || currentChat.currentBranchPath.length === 0) {
+      return null
+    }
+    return currentChat.currentBranchPath[currentChat.currentBranchPath.length - 1]
+  }
+
+  // Handle branching from a specific message
+  const handleBranchFrom = (messageId) => {
+    // Find the index of the message in current branch
+    const messageIndex = currentChat.currentBranchPath.indexOf(messageId)
+    if (messageIndex === -1) return
+
+    // Create new branch path up to and including the selected message
+    const newBranchPath = currentChat.currentBranchPath.slice(0, messageIndex + 1)
+
+    const updatedChat = {
+      ...currentChat,
+      currentBranchPath: newBranchPath,
+    }
+
+    updateChat(updatedChat)
+    setBranchMenuAnchor(null)
+  }
+
+  // Switch to a different branch (child)
+  const handleSwitchToBranch = (childMessageId) => {
+    const message = currentChat.messagesMap[childMessageId]
+    if (!message) return
+
+    // Build path from root to this message
+    const newPath = []
+    let currentId = childMessageId
+
+    while (currentId) {
+      newPath.unshift(currentId)
+      currentId = currentChat.messagesMap[currentId].parentId
+    }
+
+    const updatedChat = {
+      ...currentChat,
+      currentBranchPath: newPath,
+    }
+
+    updateChat(updatedChat)
+    setBranchMenuAnchor(null)
+  }
+
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || isLoading || !currentChat) return
 
+    const userMessageId = generateId()
+    const parentId = getLastMessageId()
+
     const userMessage = {
+      id: userMessageId,
       role: 'user',
       content: inputMessage.trim(),
       timestamp: new Date().toISOString(),
+      parentId,
+      children: [],
     }
 
-    const updatedMessages = [...(currentChat.messages || []), userMessage]
+    // Add user message to messages map
+    const updatedMessagesMap = {
+      ...currentChat.messagesMap,
+      [userMessageId]: userMessage,
+    }
+
+    // Update parent's children array if exists
+    if (parentId && updatedMessagesMap[parentId]) {
+      updatedMessagesMap[parentId] = {
+        ...updatedMessagesMap[parentId],
+        children: [...updatedMessagesMap[parentId].children, userMessageId],
+      }
+    }
+
+    // Update root messages if this is a root message
+    const updatedRootMessageIds = parentId
+      ? currentChat.rootMessageIds
+      : [...currentChat.rootMessageIds, userMessageId]
+
+    // Update current branch path
+    const updatedBranchPath = [...currentChat.currentBranchPath, userMessageId]
+
     const updatedChat = {
       ...currentChat,
-      messages: updatedMessages,
+      messagesMap: updatedMessagesMap,
+      rootMessageIds: updatedRootMessageIds,
+      currentBranchPath: updatedBranchPath,
       lastMessage: inputMessage.trim(),
       timestamp: new Date().toISOString(),
     }
+
     updateChat(updatedChat)
     setInputMessage('')
     setIsLoading(true)
     setStreamingMessage({ type: 'text', content: '', thinking: '' })
 
     try {
-      // For now, using a dummy API key - in production, this should come from settings
+      // Reconstruct message history from current branch
+      const branchMessages = updatedBranchPath
+        .map(id => updatedMessagesMap[id])
+        .filter(Boolean)
+        .map(msg => ({
+          role: msg.role,
+          content: msg.content,
+        }))
+
       const provider = createProvider('anthropic', import.meta.env.VITE_ANTHROPIC_API_KEY || 'dummy-key')
 
       const assistantMessage = await provider.sendMessage(
-        updatedMessages,
+        branchMessages,
         (chunk) => {
           setStreamingMessage(prev => {
             if (chunk.type === 'thinking') {
@@ -91,29 +258,66 @@ function ChatScreen({ chatId, onBack }) {
         }
       )
 
-      const finalMessage = {
+      const assistantMessageId = generateId()
+      const finalAssistantMessage = {
+        id: assistantMessageId,
         ...assistantMessage,
         timestamp: new Date().toISOString(),
+        parentId: userMessageId,
+        children: [],
       }
 
-      const finalMessages = [...updatedMessages, finalMessage]
+      // Add assistant message to map
+      const finalMessagesMap = {
+        ...updatedMessagesMap,
+        [assistantMessageId]: finalAssistantMessage,
+        [userMessageId]: {
+          ...updatedMessagesMap[userMessageId],
+          children: [assistantMessageId],
+        },
+      }
+
+      // Update branch path
+      const finalBranchPath = [...updatedBranchPath, assistantMessageId]
+
       const finalChat = {
         ...updatedChat,
-        messages: finalMessages,
+        messagesMap: finalMessagesMap,
+        currentBranchPath: finalBranchPath,
         lastMessage: assistantMessage.content.find(c => c.type === 'text')?.text || 'No response',
         timestamp: new Date().toISOString(),
       }
       updateChat(finalChat)
     } catch (error) {
       console.error('Error sending message:', error)
+
+      const errorMessageId = generateId()
       const errorMessage = {
+        id: errorMessageId,
         role: 'assistant',
         content: [{ type: 'text', text: `Error: ${error.message}` }],
         timestamp: new Date().toISOString(),
         isError: true,
+        parentId: userMessageId,
+        children: [],
       }
-      const errorMessages = [...updatedMessages, errorMessage]
-      updateChat({ ...updatedChat, messages: errorMessages })
+
+      const errorMessagesMap = {
+        ...updatedMessagesMap,
+        [errorMessageId]: errorMessage,
+        [userMessageId]: {
+          ...updatedMessagesMap[userMessageId],
+          children: [errorMessageId],
+        },
+      }
+
+      const errorBranchPath = [...updatedBranchPath, errorMessageId]
+
+      updateChat({
+        ...updatedChat,
+        messagesMap: errorMessagesMap,
+        currentBranchPath: errorBranchPath,
+      })
     } finally {
       setIsLoading(false)
       setStreamingMessage(null)
@@ -122,45 +326,67 @@ function ChatScreen({ chatId, onBack }) {
 
   const renderMessageContent = (content) => {
     if (typeof content === 'string') {
-      return <Typography variant="body1">{content}</Typography>
+      return (
+        <Box sx={{ '& p': { margin: 0 }, '& pre': { bgcolor: 'grey.100', p: 1, borderRadius: 1, overflow: 'auto' } }}>
+          <ReactMarkdown rehypePlugins={[rehypeHighlight]}>{content}</ReactMarkdown>
+        </Box>
+      )
     }
 
     if (Array.isArray(content)) {
-      return content.map((block, index) => {
-        if (block.type === 'text') {
-          return (
-            <Typography key={index} variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
-              {block.text}
-            </Typography>
-          )
-        } else if (block.type === 'thinking') {
-          return (
-            <Box key={index} sx={{ mb: 1 }}>
-              <Chip
-                label="Thinking"
-                size="small"
-                sx={{ mb: 1 }}
-                color="primary"
-                variant="outlined"
-              />
-              <Typography
-                variant="body2"
-                sx={{
-                  color: 'text.secondary',
-                  fontStyle: 'italic',
-                  whiteSpace: 'pre-wrap',
-                  pl: 2,
-                  borderLeft: '2px solid',
-                  borderColor: 'primary.main',
-                }}
-              >
-                {block.thinking}
-              </Typography>
+      const thinkingBlocks = content.filter(block => block.type === 'thinking')
+      const textBlocks = content.filter(block => block.type === 'text')
+
+      return (
+        <>
+          {/* Render thinking blocks first, but only once */}
+          {thinkingBlocks.length > 0 && (
+            <Box sx={{ mb: 2 }}>
+              {thinkingBlocks.map((block, index) => (
+                <Box key={`thinking-${index}`} sx={{ mb: 1 }}>
+                  <Chip
+                    label="Thinking"
+                    size="small"
+                    sx={{ mb: 1 }}
+                    color="primary"
+                    variant="outlined"
+                  />
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: 'text.secondary',
+                      fontStyle: 'italic',
+                      whiteSpace: 'pre-wrap',
+                      pl: 2,
+                      borderLeft: '2px solid',
+                      borderColor: 'primary.main',
+                    }}
+                  >
+                    {block.thinking}
+                  </Typography>
+                </Box>
+              ))}
             </Box>
-          )
-        }
-        return null
-      })
+          )}
+
+          {/* Render text blocks with markdown */}
+          {textBlocks.map((block, index) => (
+            <Box
+              key={`text-${index}`}
+              sx={{
+                '& p': { margin: 0, marginBottom: 1 },
+                '& pre': { bgcolor: 'grey.100', p: 1, borderRadius: 1, overflow: 'auto', my: 1 },
+                '& code': { bgcolor: 'grey.100', px: 0.5, py: 0.25, borderRadius: 0.5, fontSize: '0.9em' },
+                '& pre code': { bgcolor: 'transparent', p: 0 },
+                '& ul, & ol': { marginTop: 0.5, marginBottom: 0.5, paddingLeft: 3 },
+                '& h1, & h2, & h3, & h4, & h5, & h6': { marginTop: 1, marginBottom: 0.5 },
+              }}
+            >
+              <ReactMarkdown rehypePlugins={[rehypeHighlight]}>{block.text}</ReactMarkdown>
+            </Box>
+          ))}
+        </>
+      )
     }
 
     return null
@@ -189,55 +415,118 @@ function ChatScreen({ chatId, onBack }) {
       </AppBar>
 
       <Box sx={{ flex: 1, overflow: 'auto', p: 2, bgcolor: 'grey.50' }}>
-        {currentChat.messages?.map((message, index) => (
-          <Box
-            key={index}
-            sx={{
-              display: 'flex',
-              justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start',
-              mb: 2,
-            }}
-          >
-            <Box
-              sx={{
-                display: 'flex',
-                flexDirection: message.role === 'user' ? 'row-reverse' : 'row',
-                alignItems: 'flex-start',
-                maxWidth: '80%',
-              }}
-            >
-              <Avatar
+        {getCurrentBranchMessages().map((message, index) => {
+          const hasMultipleBranches = message.children && message.children.length > 1
+          const currentChildId = currentChat.currentBranchPath[index + 1]
+
+          return (
+            <Box key={message.id}>
+              <Box
                 sx={{
-                  bgcolor: message.role === 'user' ? 'primary.main' : 'secondary.main',
-                  mx: 1,
+                  display: 'flex',
+                  justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start',
+                  mb: 1,
                 }}
               >
-                {message.role === 'user' ? <PersonIcon /> : <SmartToyIcon />}
-              </Avatar>
-              <Paper
-                sx={{
-                  p: 2,
-                  bgcolor: message.isError ? 'error.light' : message.role === 'user' ? 'primary.light' : 'white',
-                }}
-              >
-                {renderMessageContent(message.content)}
-                <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
-                  {new Date(message.timestamp).toLocaleTimeString()}
-                </Typography>
-              </Paper>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    flexDirection: message.role === 'user' ? 'row-reverse' : 'row',
+                    alignItems: 'flex-start',
+                    width: '100%',
+                  }}
+                >
+                  <Avatar
+                    sx={{
+                      bgcolor: message.role === 'user' ? 'primary.main' : 'secondary.main',
+                      mx: 1,
+                    }}
+                  >
+                    {message.role === 'user' ? <PersonIcon /> : <SmartToyIcon />}
+                  </Avatar>
+                  <Box>
+                    <Paper
+                      sx={{
+                        p: 2,
+                        bgcolor: message.isError ? 'error.light' : message.role === 'user' ? 'primary.light' : 'white',
+                      }}
+                    >
+                      {renderMessageContent(message.content)}
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 1 }}>
+                        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                          {new Date(message.timestamp).toLocaleTimeString()}
+                        </Typography>
+                        <Box sx={{ display: 'flex', gap: 0.5 }}>
+                          {hasMultipleBranches && (
+                            <Tooltip title="Multiple branches">
+                              <Chip
+                                icon={<CallSplitIcon />}
+                                label={message.children.length}
+                                size="small"
+                                color="primary"
+                                variant="outlined"
+                                onClick={(e) => {
+                                  setSelectedMessageForBranch(message)
+                                  setBranchMenuAnchor(e.currentTarget)
+                                }}
+                                sx={{ cursor: 'pointer' }}
+                              />
+                            </Tooltip>
+                          )}
+                          <Tooltip title="Branch from here">
+                            <IconButton
+                              size="small"
+                              onClick={() => handleBranchFrom(message.id)}
+                              sx={{ ml: 0.5 }}
+                            >
+                              <CallSplitIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
+                      </Box>
+                    </Paper>
+                  </Box>
+                </Box>
+              </Box>
+
+              {/* Branch indicator - show when there are multiple branches */}
+              {hasMultipleBranches && (
+                <Box
+                  sx={{
+                    display: 'flex',
+                    justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start',
+                    mb: 2,
+                    ml: message.role === 'user' ? 0 : 7,
+                    mr: message.role === 'user' ? 7 : 0,
+                  }}
+                >
+                  <Chip
+                    icon={<CallSplitIcon />}
+                    label={`Branch ${message.children.indexOf(currentChildId) + 1} of ${message.children.length}`}
+                    size="small"
+                    color="info"
+                    variant="filled"
+                    onClick={(e) => {
+                      setSelectedMessageForBranch(message)
+                      setBranchMenuAnchor(e.currentTarget)
+                    }}
+                    sx={{ cursor: 'pointer' }}
+                  />
+                </Box>
+              )}
             </Box>
-          </Box>
-        ))}
+          )
+        })}
 
         {streamingMessage && (
           <Box sx={{ display: 'flex', justifyContent: 'flex-start', mb: 2 }}>
-            <Box sx={{ display: 'flex', alignItems: 'flex-start', maxWidth: '80%' }}>
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', width: '100%' }}>
               <Avatar sx={{ bgcolor: 'secondary.main', mx: 1 }}>
                 <SmartToyIcon />
               </Avatar>
               <Paper sx={{ p: 2, bgcolor: 'white' }}>
                 {streamingMessage.thinking && (
-                  <Box sx={{ mb: 1 }}>
+                  <Box sx={{ mb: 2 }}>
                     <Chip label="Thinking" size="small" sx={{ mb: 1 }} color="primary" variant="outlined" />
                     <Typography
                       variant="body2"
@@ -255,9 +544,18 @@ function ChatScreen({ chatId, onBack }) {
                   </Box>
                 )}
                 {streamingMessage.content && (
-                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
-                    {streamingMessage.content}
-                  </Typography>
+                  <Box
+                    sx={{
+                      '& p': { margin: 0, marginBottom: 1 },
+                      '& pre': { bgcolor: 'grey.100', p: 1, borderRadius: 1, overflow: 'auto', my: 1 },
+                      '& code': { bgcolor: 'grey.100', px: 0.5, py: 0.25, borderRadius: 0.5, fontSize: '0.9em' },
+                      '& pre code': { bgcolor: 'transparent', p: 0 },
+                      '& ul, & ol': { marginTop: 0.5, marginBottom: 0.5, paddingLeft: 3 },
+                      '& h1, & h2, & h3, & h4, & h5, & h6': { marginTop: 1, marginBottom: 0.5 },
+                    }}
+                  >
+                    <ReactMarkdown rehypePlugins={[rehypeHighlight]}>{streamingMessage.content}</ReactMarkdown>
+                  </Box>
                 )}
                 <CircularProgress size={16} sx={{ mt: 1 }} />
               </Paper>
@@ -267,6 +565,43 @@ function ChatScreen({ chatId, onBack }) {
 
         <div ref={messagesEndRef} />
       </Box>
+
+      {/* Branch selection menu */}
+      <Menu
+        anchorEl={branchMenuAnchor}
+        open={Boolean(branchMenuAnchor)}
+        onClose={() => {
+          setBranchMenuAnchor(null)
+          setSelectedMessageForBranch(null)
+        }}
+      >
+        {selectedMessageForBranch?.children.map((childId, index) => {
+          const childMessage = currentChat.messagesMap[childId]
+          const isCurrentBranch = currentChat.currentBranchPath.includes(childId)
+          const previewContent = typeof childMessage?.content === 'string'
+            ? childMessage.content.substring(0, 50)
+            : Array.isArray(childMessage?.content)
+            ? childMessage.content.find(c => c.type === 'text')?.text?.substring(0, 50) || 'Branch'
+            : 'Branch'
+
+          return (
+            <MenuItem
+              key={childId}
+              onClick={() => handleSwitchToBranch(childId)}
+              selected={isCurrentBranch}
+            >
+              <Box>
+                <Typography variant="body2" fontWeight={isCurrentBranch ? 'bold' : 'normal'}>
+                  Branch {index + 1} {isCurrentBranch && '(Current)'}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {previewContent}...
+                </Typography>
+              </Box>
+            </MenuItem>
+          )
+        })}
+      </Menu>
 
       <Paper sx={{ p: 2, borderRadius: 0 }} elevation={3}>
         <Box sx={{ display: 'flex', gap: 1 }}>

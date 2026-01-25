@@ -36,7 +36,9 @@ function ChatsScreen({ onChatClick }) {
           provider: 'Anthropic',
           lastMessage: 'Start chatting...',
           timestamp: new Date().toISOString(),
-          messages: [],
+          messagesMap: {},
+          rootMessageIds: [],
+          currentBranchPath: [],
           model: 'claude-sonnet-4-5-20250929',
         },
       ]
@@ -79,7 +81,9 @@ function ChatsScreen({ onChatClick }) {
       provider: 'Anthropic',
       lastMessage: 'Start chatting...',
       timestamp: new Date().toISOString(),
-      messages: [],
+      messagesMap: {},
+      rootMessageIds: [],
+      currentBranchPath: [],
       model: 'claude-sonnet-4-5-20250929',
     }
     setChats([newChat, ...chats])
