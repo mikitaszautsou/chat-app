@@ -14,6 +14,11 @@ import {
   MenuItem,
   Tooltip,
   Badge,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
 } from '@mui/material'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import SendIcon from '@mui/icons-material/Send'
@@ -21,6 +26,10 @@ import PersonIcon from '@mui/icons-material/Person'
 import SmartToyIcon from '@mui/icons-material/SmartToy'
 import CallSplitIcon from '@mui/icons-material/CallSplit'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
+import EditIcon from '@mui/icons-material/Edit'
+import DeleteIcon from '@mui/icons-material/Delete'
+import SaveIcon from '@mui/icons-material/Save'
+import CancelIcon from '@mui/icons-material/Cancel'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import 'highlight.js/styles/github.css'
@@ -43,6 +52,10 @@ function ChatScreen({ chatId, onBack }) {
   const [selectedMessageForBranch, setSelectedMessageForBranch] = useState(null)
   const [modelMenuAnchor, setModelMenuAnchor] = useState(null)
   const [availableModels, setAvailableModels] = useState([])
+  const [editingMessageId, setEditingMessageId] = useState(null)
+  const [editText, setEditText] = useState('')
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [messageToDelete, setMessageToDelete] = useState(null)
   const messagesEndRef = useRef(null)
 
   useEffect(() => {
@@ -288,6 +301,251 @@ function ChatScreen({ chatId, onBack }) {
 
     await updateChat(updatedChat)
     handleModelMenuClose()
+  }
+
+  const handleEditMessage = (message) => {
+    setEditingMessageId(message.id)
+    // Extract text from message content
+    const text = typeof message.content === 'string'
+      ? message.content
+      : message.content
+          .filter(c => c.type === 'text')
+          .map(c => c.text)
+          .join('\n')
+    setEditText(text)
+  }
+
+  const handleSaveEdit = async () => {
+    if (!currentChat || !editingMessageId || !editText.trim()) return
+
+    const editedMessage = currentChat.messagesMap[editingMessageId]
+
+    // Get all descendants of this message (responses to delete)
+    const getDescendants = (msgId) => {
+      const descendants = []
+      const msg = currentChat.messagesMap[msgId]
+      if (msg && msg.children) {
+        msg.children.forEach(childId => {
+          descendants.push(childId)
+          descendants.push(...getDescendants(childId))
+        })
+      }
+      return descendants
+    }
+
+    const toDelete = getDescendants(editingMessageId)
+
+    // Remove all descendants from messagesMap
+    const updatedMessagesMap = { ...currentChat.messagesMap }
+    toDelete.forEach(id => {
+      delete updatedMessagesMap[id]
+    })
+
+    // Update the edited message
+    updatedMessagesMap[editingMessageId] = {
+      ...editedMessage,
+      content: editText.trim(),
+      edited: true,
+      editedAt: new Date().toISOString(),
+      children: [], // Clear children since we deleted them
+    }
+
+    // Update currentBranchPath - remove all deleted messages
+    const updatedBranchPath = currentChat.currentBranchPath.filter(
+      id => !toDelete.includes(id)
+    )
+
+    const updatedChat = {
+      ...currentChat,
+      messagesMap: updatedMessagesMap,
+      currentBranchPath: updatedBranchPath,
+      lastMessage: editText.trim(),
+      timestamp: new Date().toISOString(),
+    }
+
+    await updateChat(updatedChat)
+    setEditingMessageId(null)
+    setEditText('')
+
+    // Trigger inference to generate new response
+    setIsLoading(true)
+    setStreamingMessage({ type: 'text', content: '', thinking: '' })
+
+    try {
+      // Reconstruct message history from current branch
+      const branchMessages = updatedBranchPath
+        .map(id => updatedMessagesMap[id])
+        .filter(Boolean)
+        .map(msg => ({
+          role: msg.role,
+          content: msg.content,
+        }))
+
+      const providerName = currentChat.provider.toLowerCase()
+      const apiKey = getApiKeyForProvider(providerName)
+
+      if (!apiKey) {
+        throw new Error(`No API key found for ${currentChat.provider}. Please add your API key to the .env file.`)
+      }
+
+      const provider = createProvider(providerName, apiKey)
+
+      const assistantMessage = await provider.sendMessage(
+        branchMessages,
+        (chunk) => {
+          setStreamingMessage(prev => {
+            if (chunk.type === 'thinking') {
+              return { ...prev, thinking: chunk.content }
+            } else if (chunk.type === 'text') {
+              return { ...prev, content: chunk.content }
+            }
+            return prev
+          })
+        },
+        {
+          model: currentChat.model || 'claude-sonnet-4-5-20250929',
+          thinking: true,
+        }
+      )
+
+      const assistantMessageId = generateId()
+      const finalAssistantMessage = {
+        id: assistantMessageId,
+        ...assistantMessage,
+        timestamp: new Date().toISOString(),
+        parentId: editingMessageId,
+        children: [],
+      }
+
+      // Add assistant message to map
+      const finalMessagesMap = {
+        ...updatedMessagesMap,
+        [assistantMessageId]: finalAssistantMessage,
+        [editingMessageId]: {
+          ...updatedMessagesMap[editingMessageId],
+          children: [assistantMessageId],
+        },
+      }
+
+      // Update branch path
+      const finalBranchPath = [...updatedBranchPath, assistantMessageId]
+
+      const finalChat = {
+        ...updatedChat,
+        messagesMap: finalMessagesMap,
+        currentBranchPath: finalBranchPath,
+        lastMessage: assistantMessage.content.find(c => c.type === 'text')?.text || 'No response',
+        timestamp: new Date().toISOString(),
+      }
+
+      await updateChat(finalChat)
+    } catch (error) {
+      console.error('Error generating response after edit:', error)
+
+      const errorMessageId = generateId()
+      const errorMessage = {
+        id: errorMessageId,
+        role: 'assistant',
+        content: [{ type: 'text', text: `Error: ${error.message}` }],
+        timestamp: new Date().toISOString(),
+        isError: true,
+        parentId: editingMessageId,
+        children: [],
+      }
+
+      const errorMessagesMap = {
+        ...updatedMessagesMap,
+        [errorMessageId]: errorMessage,
+        [editingMessageId]: {
+          ...updatedMessagesMap[editingMessageId],
+          children: [errorMessageId],
+        },
+      }
+
+      const errorBranchPath = [...updatedBranchPath, errorMessageId]
+
+      const errorChat = {
+        ...updatedChat,
+        messagesMap: errorMessagesMap,
+        currentBranchPath: errorBranchPath,
+      }
+
+      await updateChat(errorChat)
+    } finally {
+      setIsLoading(false)
+      setStreamingMessage(null)
+    }
+  }
+
+  const handleCancelEdit = () => {
+    setEditingMessageId(null)
+    setEditText('')
+  }
+
+  const handleDeleteMessage = (message) => {
+    setMessageToDelete(message)
+    setDeleteDialogOpen(true)
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!currentChat || !messageToDelete) return
+
+    // Get all descendants of this message
+    const getDescendants = (msgId) => {
+      const descendants = [msgId]
+      const msg = currentChat.messagesMap[msgId]
+      if (msg && msg.children) {
+        msg.children.forEach(childId => {
+          descendants.push(...getDescendants(childId))
+        })
+      }
+      return descendants
+    }
+
+    const toDelete = getDescendants(messageToDelete.id)
+
+    // Remove all descendants from messagesMap
+    const updatedMessagesMap = { ...currentChat.messagesMap }
+    toDelete.forEach(id => {
+      delete updatedMessagesMap[id]
+    })
+
+    // Update parent's children array
+    if (messageToDelete.parentId) {
+      const parent = updatedMessagesMap[messageToDelete.parentId]
+      if (parent) {
+        updatedMessagesMap[messageToDelete.parentId] = {
+          ...parent,
+          children: parent.children.filter(id => id !== messageToDelete.id)
+        }
+      }
+    }
+
+    // Update rootMessageIds if this is a root message
+    const updatedRootMessageIds = currentChat.rootMessageIds.filter(
+      id => id !== messageToDelete.id
+    )
+
+    // Update currentBranchPath - remove all deleted messages
+    const updatedBranchPath = currentChat.currentBranchPath.filter(
+      id => !toDelete.includes(id)
+    )
+
+    const updatedChat = {
+      ...currentChat,
+      messagesMap: updatedMessagesMap,
+      rootMessageIds: updatedRootMessageIds,
+      currentBranchPath: updatedBranchPath,
+    }
+
+    await updateChat(updatedChat)
+    setDeleteDialogOpen(false)
+    setMessageToDelete(null)
+  }
+
+  const handleCancelDelete = () => {
+    setDeleteDialogOpen(false)
+    setMessageToDelete(null)
   }
 
   const handleSendMessage = async () => {
@@ -634,7 +892,46 @@ function ChatScreen({ chatId, onBack }) {
                         bgcolor: message.isError ? 'error.light' : message.role === 'user' ? 'primary.light' : 'white',
                       }}
                     >
-                      {renderMessageContent(message.content)}
+                      {editingMessageId === message.id ? (
+                        <Box>
+                          <TextField
+                            fullWidth
+                            multiline
+                            value={editText}
+                            onChange={(e) => setEditText(e.target.value)}
+                            autoFocus
+                            variant="outlined"
+                            sx={{ mb: 1 }}
+                          />
+                          <Box sx={{ display: 'flex', gap: 1 }}>
+                            <Button
+                              size="small"
+                              variant="contained"
+                              startIcon={<SaveIcon />}
+                              onClick={handleSaveEdit}
+                            >
+                              Save
+                            </Button>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              startIcon={<CancelIcon />}
+                              onClick={handleCancelEdit}
+                            >
+                              Cancel
+                            </Button>
+                          </Box>
+                        </Box>
+                      ) : (
+                        <>
+                          {renderMessageContent(message.content)}
+                          {message.edited && (
+                            <Typography variant="caption" sx={{ color: 'text.secondary', fontStyle: 'italic', display: 'block', mt: 0.5 }}>
+                              (edited)
+                            </Typography>
+                          )}
+                        </>
+                      )}
                       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 1 }}>
                         <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                           {new Date(message.timestamp).toLocaleTimeString()}
@@ -665,6 +962,29 @@ function ChatScreen({ chatId, onBack }) {
                               <CallSplitIcon fontSize="small" />
                             </IconButton>
                           </Tooltip>
+                          {message.role === 'user' && editingMessageId !== message.id && (
+                            <Tooltip title="Edit message">
+                              <IconButton
+                                size="small"
+                                onClick={() => handleEditMessage(message)}
+                                sx={{ ml: 0.5 }}
+                              >
+                                <EditIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          )}
+                          {editingMessageId !== message.id && (
+                            <Tooltip title="Delete message">
+                              <IconButton
+                                size="small"
+                                onClick={() => handleDeleteMessage(message)}
+                                sx={{ ml: 0.5 }}
+                                color="error"
+                              >
+                                <DeleteIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          )}
                         </Box>
                       </Box>
                     </Paper>
@@ -812,6 +1132,22 @@ function ChatScreen({ chatId, onBack }) {
           </IconButton>
         </Box>
       </Paper>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onClose={handleCancelDelete}>
+        <DialogTitle>Delete Message</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to delete this message? This will also delete all replies to this message. This action cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCancelDelete}>Cancel</Button>
+          <Button onClick={handleConfirmDelete} color="error" variant="contained">
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }
