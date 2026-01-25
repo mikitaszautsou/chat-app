@@ -12,11 +12,44 @@ function App() {
     const savedTheme = localStorage.getItem('app-theme-mode')
     return savedTheme || 'light'
   })
+  const [primaryColor, setPrimaryColor] = useState(() => {
+    // Load color preference from localStorage
+    const savedColor = localStorage.getItem('app-primary-color')
+    return savedColor || '#1976d2'
+  })
+
+  // Load chat ID from URL on mount
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search)
+    const chatIdFromUrl = urlParams.get('chat')
+    if (chatIdFromUrl) {
+      setSelectedChatId(parseInt(chatIdFromUrl))
+      setCurrentScreen('chat')
+    }
+  }, [])
 
   useEffect(() => {
     // Save theme preference to localStorage
     localStorage.setItem('app-theme-mode', themeMode)
   }, [themeMode])
+
+  useEffect(() => {
+    // Save color preference to localStorage
+    localStorage.setItem('app-primary-color', primaryColor)
+  }, [primaryColor])
+
+  // Update URL when chat is selected
+  useEffect(() => {
+    if (currentScreen === 'chat' && selectedChatId) {
+      const url = new URL(window.location)
+      url.searchParams.set('chat', selectedChatId.toString())
+      window.history.pushState({}, '', url)
+    } else if (currentScreen === 'chats') {
+      const url = new URL(window.location)
+      url.searchParams.delete('chat')
+      window.history.pushState({}, '', url)
+    }
+  }, [currentScreen, selectedChatId])
 
   const theme = useMemo(
     () =>
@@ -24,18 +57,22 @@ function App() {
         palette: {
           mode: themeMode,
           primary: {
-            main: themeMode === 'light' ? '#1976d2' : '#90caf9',
+            main: primaryColor,
           },
           secondary: {
             main: themeMode === 'light' ? '#dc004e' : '#f48fb1',
           },
         },
       }),
-    [themeMode]
+    [themeMode, primaryColor]
   )
 
   const toggleTheme = () => {
     setThemeMode((prevMode) => (prevMode === 'light' ? 'dark' : 'light'))
+  }
+
+  const handleColorChange = (color) => {
+    setPrimaryColor(color)
   }
 
   const handleOpenChat = (chatId) => {
@@ -52,10 +89,23 @@ function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       {currentScreen === 'chats' && (
-        <ChatsScreen onChatClick={handleOpenChat} themeMode={themeMode} onToggleTheme={toggleTheme} />
+        <ChatsScreen
+          onChatClick={handleOpenChat}
+          themeMode={themeMode}
+          onToggleTheme={toggleTheme}
+          primaryColor={primaryColor}
+          onColorChange={handleColorChange}
+        />
       )}
       {currentScreen === 'chat' && selectedChatId && (
-        <ChatScreen chatId={selectedChatId} onBack={handleBackToChats} themeMode={themeMode} onToggleTheme={toggleTheme} />
+        <ChatScreen
+          chatId={selectedChatId}
+          onBack={handleBackToChats}
+          themeMode={themeMode}
+          onToggleTheme={toggleTheme}
+          primaryColor={primaryColor}
+          onColorChange={handleColorChange}
+        />
       )}
     </ThemeProvider>
   )

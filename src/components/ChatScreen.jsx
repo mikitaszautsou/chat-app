@@ -34,6 +34,8 @@ import ExpandLessIcon from '@mui/icons-material/ExpandLess'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import Brightness4Icon from '@mui/icons-material/Brightness4'
 import Brightness7Icon from '@mui/icons-material/Brightness7'
+import PaletteIcon from '@mui/icons-material/Palette'
+import CheckIcon from '@mui/icons-material/Check'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import 'highlight.js/styles/github.css'
@@ -47,7 +49,18 @@ const generateId = () => {
   return crypto.randomUUID()
 }
 
-function ChatScreen({ chatId, onBack, themeMode, onToggleTheme }) {
+const COLOR_PRESETS = [
+  { name: 'Blue', color: '#1976d2' },
+  { name: 'Purple', color: '#9c27b0' },
+  { name: 'Green', color: '#2e7d32' },
+  { name: 'Orange', color: '#ed6c02' },
+  { name: 'Red', color: '#d32f2f' },
+  { name: 'Teal', color: '#00897b' },
+  { name: 'Pink', color: '#c2185b' },
+  { name: 'Indigo', color: '#3f51b5' },
+]
+
+function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, primaryColor, onColorChange }) {
   const [currentChat, setCurrentChat] = useState(null)
   const [inputMessage, setInputMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -61,6 +74,7 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme }) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [messageToDelete, setMessageToDelete] = useState(null)
   const [collapsedMessages, setCollapsedMessages] = useState(new Set())
+  const [colorMenuAnchor, setColorMenuAnchor] = useState(null)
   const messagesEndRef = useRef(null)
 
   useEffect(() => {
@@ -565,6 +579,19 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme }) {
     })
   }
 
+  const handleColorMenuOpen = (event) => {
+    setColorMenuAnchor(event.currentTarget)
+  }
+
+  const handleColorMenuClose = () => {
+    setColorMenuAnchor(null)
+  }
+
+  const handleColorSelect = (color) => {
+    onColorChange(color)
+    handleColorMenuClose()
+  }
+
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || isLoading || !currentChat) return
 
@@ -875,11 +902,44 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme }) {
               )}
             </Box>
           </Box>
-          <IconButton color="inherit" onClick={onToggleTheme}>
+          <IconButton color="inherit" onClick={onToggleTheme} sx={{ mr: 1 }}>
             {themeMode === 'dark' ? <Brightness7Icon /> : <Brightness4Icon />}
+          </IconButton>
+          <IconButton color="inherit" onClick={handleColorMenuOpen}>
+            <PaletteIcon />
           </IconButton>
         </Toolbar>
       </AppBar>
+
+      {/* Color Picker Menu */}
+      <Menu
+        anchorEl={colorMenuAnchor}
+        open={Boolean(colorMenuAnchor)}
+        onClose={handleColorMenuClose}
+      >
+        {COLOR_PRESETS.map((preset) => (
+          <MenuItem
+            key={preset.color}
+            onClick={() => handleColorSelect(preset.color)}
+            sx={{ display: 'flex', alignItems: 'center', gap: 2 }}
+          >
+            <Box
+              sx={{
+                width: 24,
+                height: 24,
+                bgcolor: preset.color,
+                borderRadius: 1,
+                border: '2px solid',
+                borderColor: 'divider',
+              }}
+            />
+            <Typography>{preset.name}</Typography>
+            {primaryColor === preset.color && (
+              <CheckIcon fontSize="small" sx={{ ml: 'auto' }} />
+            )}
+          </MenuItem>
+        ))}
+      </Menu>
 
       {/* Model Selection Menu */}
       <Menu
