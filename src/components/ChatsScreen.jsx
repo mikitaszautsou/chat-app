@@ -14,23 +14,27 @@ import {
   IconButton,
   Divider,
   Container,
+  CircularProgress,
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import SmartToyIcon from '@mui/icons-material/SmartToy'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
-
-const STORAGE_KEY = 'ai-chat-app-chats'
+import { chatsAPI } from '../api/chats'
 
 function ChatsScreen({ onChatClick }) {
   const [chats, setChats] = useState([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const savedChats = localStorage.getItem(STORAGE_KEY)
-    if (savedChats) {
-      setChats(JSON.parse(savedChats))
-    } else {
-      const initialChats = [
-        {
+    loadChats()
+  }, [])
+
+  const loadChats = async () => {
+    try {
+      const loadedChats = await chatsAPI.getAll()
+      if (loadedChats.length === 0) {
+        // Create initial chat if none exist
+        const initialChat = {
           id: Date.now(),
           title: 'My First Chat',
           provider: 'Anthropic',
@@ -40,18 +44,18 @@ function ChatsScreen({ onChatClick }) {
           rootMessageIds: [],
           currentBranchPath: [],
           model: 'claude-sonnet-4-5-20250929',
-        },
-      ]
-      setChats(initialChats)
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(initialChats))
+        }
+        await chatsAPI.save(initialChat)
+        setChats([initialChat])
+      } else {
+        setChats(loadedChats)
+      }
+    } catch (error) {
+      console.error('Error loading chats:', error)
+    } finally {
+      setLoading(false)
     }
-  }, [])
-
-  useEffect(() => {
-    if (chats.length > 0) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(chats))
-    }
-  }, [chats])
+  }
 
   const formatTimestamp = (timestamp) => {
     const date = new Date(timestamp)
@@ -74,7 +78,7 @@ function ChatsScreen({ onChatClick }) {
     }
   }
 
-  const handleNewChat = () => {
+  const handleNewChat = async () => {
     const newChat = {
       id: Date.now(),
       title: `New Chat ${chats.length + 1}`,
@@ -86,10 +90,24 @@ function ChatsScreen({ onChatClick }) {
       currentBranchPath: [],
       model: 'claude-sonnet-4-5-20250929',
     }
-    setChats([newChat, ...chats])
-    if (onChatClick) {
-      onChatClick(newChat.id)
+
+    try {
+      await chatsAPI.save(newChat)
+      setChats([newChat, ...chats])
+      if (onChatClick) {
+        onChatClick(newChat.id)
+      }
+    } catch (error) {
+      console.error('Error creating new chat:', error)
     }
+  }
+
+  if (loading) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <CircularProgress />
+      </Box>
+    )
   }
 
   return (

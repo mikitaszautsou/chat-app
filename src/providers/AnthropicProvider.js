@@ -26,6 +26,7 @@ class AnthropicProvider extends BaseProvider {
 
   /**
    * Convert our message format to Anthropic format
+   * Note: Only send text content back to API, not thinking blocks
    */
   formatMessages(messages) {
     return messages.map(msg => ({
@@ -97,12 +98,14 @@ class AnthropicProvider extends BaseProvider {
               type: 'thinking',
               thinking: thinkingContent,
             })
+            thinkingContent = '' // Reset after adding
           }
           if (textContent) {
             fullContent.push({
               type: 'text',
               text: textContent,
             })
+            textContent = '' // Reset after adding
           }
         } else if (event.type === 'message_stop') {
           break

@@ -25,8 +25,7 @@ import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import 'highlight.js/styles/github.css'
 import { createProvider } from '../providers'
-
-const STORAGE_KEY = 'ai-chat-app-chats'
+import { chatsAPI } from '../api/chats'
 
 // Generate unique ID for messages
 const generateId = () => {
@@ -34,7 +33,6 @@ const generateId = () => {
 }
 
 function ChatScreen({ chatId, onBack }) {
-  const [chats, setChats] = useState([])
   const [currentChat, setCurrentChat] = useState(null)
   const [inputMessage, setInputMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -44,45 +42,47 @@ function ChatScreen({ chatId, onBack }) {
   const messagesEndRef = useRef(null)
 
   useEffect(() => {
-    const savedChats = localStorage.getItem(STORAGE_KEY)
-    if (savedChats) {
-      const parsedChats = JSON.parse(savedChats)
-      const chat = parsedChats.find(c => c.id === chatId)
-      if (chat) {
-        const migratedChat = migrateChat(chat)
-        setCurrentChat(migratedChat)
-        setChats(parsedChats)
-
-        // Save migrated chat back to storage if migration occurred
-        if (!chat.messagesMap && migratedChat.messagesMap) {
-          const updatedChats = parsedChats.map(c => c.id === chatId ? migratedChat : c)
-          setChats(updatedChats)
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedChats))
-        }
-      }
-    }
+    loadChat()
   }, [chatId])
+
+  const loadChat = async () => {
+    try {
+      const chat = await chatsAPI.getById(chatId)
+      const migratedChat = migrateChat(chat)
+      setCurrentChat(migratedChat)
+
+      // Save migrated chat back if migration occurred
+      if (!chat.messagesMap && migratedChat.messagesMap) {
+        await chatsAPI.save(migratedChat)
+      }
+    } catch (error) {
+      console.error('Error loading chat:', error)
+    }
+  }
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [currentChat?.messages, streamingMessage])
 
-  const updateChat = (updatedChat) => {
-    const updatedChats = chats.map(c => c.id === updatedChat.id ? updatedChat : c)
-    setChats(updatedChats)
-    setCurrentChat(updatedChat)
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedChats))
+  const updateChat = async (updatedChat) => {
+    try {
+      await chatsAPI.save(updatedChat)
+      setCurrentChat(updatedChat)
+    } catch (error) {
+      console.error('Error updating chat:', error)
+    }
   }
 
   // Migrate old chats to new branching structure
   const migrateChat = (chat) => {
-    if (!chat.messages || chat.messages.length === 0) {
-      return { ...chat, messagesMap: {}, rootMessageIds: [], currentBranchPath: [] }
-    }
-
     // Check if already migrated
     if (chat.messagesMap) {
       return chat
+    }
+
+    // Handle empty or no messages
+    if (!chat.messages || chat.messages.length === 0) {
+      return { ...chat, messagesMap: {}, rootMessageIds: [], currentBranchPath: [] }
     }
 
     const messagesMap = {}
