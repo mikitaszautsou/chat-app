@@ -30,6 +30,8 @@ import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
 import SaveIcon from '@mui/icons-material/Save'
 import CancelIcon from '@mui/icons-material/Cancel'
+import ExpandLessIcon from '@mui/icons-material/ExpandLess'
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import 'highlight.js/styles/github.css'
@@ -56,6 +58,7 @@ function ChatScreen({ chatId, onBack }) {
   const [editText, setEditText] = useState('')
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [messageToDelete, setMessageToDelete] = useState(null)
+  const [collapsedMessages, setCollapsedMessages] = useState(new Set())
   const messagesEndRef = useRef(null)
 
   useEffect(() => {
@@ -548,6 +551,18 @@ function ChatScreen({ chatId, onBack }) {
     setMessageToDelete(null)
   }
 
+  const handleToggleCollapse = (messageId) => {
+    setCollapsedMessages(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(messageId)) {
+        newSet.delete(messageId)
+      } else {
+        newSet.add(messageId)
+      }
+      return newSet
+    })
+  }
+
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || isLoading || !currentChat) return
 
@@ -729,7 +744,30 @@ function ChatScreen({ chatId, onBack }) {
     }
   }
 
-  const renderMessageContent = (content) => {
+  const getMessagePreview = (content, maxLength = 150) => {
+    let text = ''
+    if (typeof content === 'string') {
+      text = content
+    } else if (Array.isArray(content)) {
+      const textBlocks = content.filter(block => block.type === 'text')
+      text = textBlocks.map(block => block.text).join(' ')
+    }
+
+    if (text.length > maxLength) {
+      return text.substring(0, maxLength) + '...'
+    }
+    return text
+  }
+
+  const renderMessageContent = (content, isCollapsed = false) => {
+    if (isCollapsed) {
+      const preview = getMessagePreview(content)
+      return (
+        <Typography variant="body2" sx={{ color: 'text.secondary', fontStyle: 'italic' }}>
+          {preview}
+        </Typography>
+      )
+    }
     if (typeof content === 'string') {
       return (
         <Box sx={{ '& p': { margin: 0 }, '& pre': { bgcolor: 'grey.100', p: 1, borderRadius: 1, overflow: 'auto' } }}>
@@ -924,7 +962,7 @@ function ChatScreen({ chatId, onBack }) {
                         </Box>
                       ) : (
                         <>
-                          {renderMessageContent(message.content)}
+                          {renderMessageContent(message.content, collapsedMessages.has(message.id))}
                           {message.edited && (
                             <Typography variant="caption" sx={{ color: 'text.secondary', fontStyle: 'italic', display: 'block', mt: 0.5 }}>
                               (edited)
@@ -962,6 +1000,21 @@ function ChatScreen({ chatId, onBack }) {
                               <CallSplitIcon fontSize="small" />
                             </IconButton>
                           </Tooltip>
+                          {editingMessageId !== message.id && (
+                            <Tooltip title={collapsedMessages.has(message.id) ? "Expand message" : "Collapse message"}>
+                              <IconButton
+                                size="small"
+                                onClick={() => handleToggleCollapse(message.id)}
+                                sx={{ ml: 0.5 }}
+                              >
+                                {collapsedMessages.has(message.id) ? (
+                                  <ExpandMoreIcon fontSize="small" />
+                                ) : (
+                                  <ExpandLessIcon fontSize="small" />
+                                )}
+                              </IconButton>
+                            </Tooltip>
+                          )}
                           {message.role === 'user' && editingMessageId !== message.id && (
                             <Tooltip title="Edit message">
                               <IconButton
