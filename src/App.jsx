@@ -4,18 +4,29 @@ import CssBaseline from '@mui/material/CssBaseline'
 import ChatsScreen from './components/ChatsScreen'
 import ChatScreen from './components/ChatScreen'
 
+// Provider-based color mapping
+const getProviderColor = (provider) => {
+  const providerLower = provider?.toLowerCase() || 'anthropic'
+  switch (providerLower) {
+    case 'anthropic':
+      return '#ff9800' // Orange
+    case 'gemini':
+      return '#4caf50' // Green
+    case 'deepseek':
+      return '#2196f3' // Blue
+    default:
+      return '#1976d2' // Default blue
+  }
+}
+
 function App() {
   const [currentScreen, setCurrentScreen] = useState('chats')
   const [selectedChatId, setSelectedChatId] = useState(null)
+  const [currentProvider, setCurrentProvider] = useState('anthropic')
   const [themeMode, setThemeMode] = useState(() => {
     // Load theme preference from localStorage
     const savedTheme = localStorage.getItem('app-theme-mode')
     return savedTheme || 'light'
-  })
-  const [primaryColor, setPrimaryColor] = useState(() => {
-    // Load color preference from localStorage
-    const savedColor = localStorage.getItem('app-primary-color')
-    return savedColor || '#1976d2'
   })
 
   // Load chat ID from URL on mount
@@ -32,11 +43,6 @@ function App() {
     // Save theme preference to localStorage
     localStorage.setItem('app-theme-mode', themeMode)
   }, [themeMode])
-
-  useEffect(() => {
-    // Save color preference to localStorage
-    localStorage.setItem('app-primary-color', primaryColor)
-  }, [primaryColor])
 
   // Update URL when chat is selected
   useEffect(() => {
@@ -57,22 +63,18 @@ function App() {
         palette: {
           mode: themeMode,
           primary: {
-            main: primaryColor,
+            main: getProviderColor(currentProvider),
           },
           secondary: {
             main: themeMode === 'light' ? '#dc004e' : '#f48fb1',
           },
         },
       }),
-    [themeMode, primaryColor]
+    [themeMode, currentProvider]
   )
 
   const toggleTheme = () => {
     setThemeMode((prevMode) => (prevMode === 'light' ? 'dark' : 'light'))
-  }
-
-  const handleColorChange = (color) => {
-    setPrimaryColor(color)
   }
 
   const handleOpenChat = (chatId) => {
@@ -83,6 +85,7 @@ function App() {
   const handleBackToChats = () => {
     setCurrentScreen('chats')
     setSelectedChatId(null)
+    setCurrentProvider('anthropic') // Reset to default when back to chats
   }
 
   return (
@@ -93,8 +96,6 @@ function App() {
           onChatClick={handleOpenChat}
           themeMode={themeMode}
           onToggleTheme={toggleTheme}
-          primaryColor={primaryColor}
-          onColorChange={handleColorChange}
         />
       )}
       {currentScreen === 'chat' && selectedChatId && (
@@ -103,8 +104,7 @@ function App() {
           onBack={handleBackToChats}
           themeMode={themeMode}
           onToggleTheme={toggleTheme}
-          primaryColor={primaryColor}
-          onColorChange={handleColorChange}
+          onProviderChange={setCurrentProvider}
         />
       )}
     </ThemeProvider>
