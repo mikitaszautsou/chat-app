@@ -36,7 +36,10 @@ import Brightness4Icon from '@mui/icons-material/Brightness4'
 import Brightness7Icon from '@mui/icons-material/Brightness7'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
 import 'highlight.js/styles/github.css'
+import 'katex/dist/katex.min.css'
 import { createProvider } from '../providers'
 import { EmojiProvider } from '../providers'
 import { chatsAPI } from '../api/chats'
@@ -61,7 +64,7 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [messageToDelete, setMessageToDelete] = useState(null)
   const [collapsedMessages, setCollapsedMessages] = useState(new Set())
-  const messagesEndRef = useRef(null)
+  // messagesTopRef removed - no longer needed with reversed message order
 
   useEffect(() => {
     loadChat()
@@ -98,9 +101,7 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
     }
   }
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [currentChat?.messages, streamingMessage])
+  // Auto-scroll removed - with reversed order, newest messages are already visible at top
 
   useEffect(() => {
     // Load available models when chat loads
@@ -780,7 +781,12 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
     if (typeof content === 'string') {
       return (
         <Box sx={{ '& p': { margin: 0 }, '& pre': { bgcolor: 'grey.100', p: 1, borderRadius: 1, overflow: 'auto' } }}>
-          <ReactMarkdown rehypePlugins={[rehypeHighlight]}>{content}</ReactMarkdown>
+          <ReactMarkdown
+            remarkPlugins={[remarkMath]}
+            rehypePlugins={[rehypeHighlight, rehypeKatex]}
+          >
+            {content}
+          </ReactMarkdown>
         </Box>
       )
     }
@@ -834,7 +840,12 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
                 '& h1, & h2, & h3, & h4, & h5, & h6': { marginTop: 1, marginBottom: 0.5 },
               }}
             >
-              <ReactMarkdown rehypePlugins={[rehypeHighlight]}>{block.text}</ReactMarkdown>
+              <ReactMarkdown
+                remarkPlugins={[remarkMath]}
+                rehypePlugins={[rehypeHighlight, rehypeKatex]}
+              >
+                {block.text}
+              </ReactMarkdown>
             </Box>
           ))}
         </>
@@ -906,9 +917,62 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
       </Menu>
 
       <Box sx={{ flex: 1, overflow: 'auto', p: 2, bgcolor: 'grey.50' }}>
-        {getCurrentBranchMessages().map((message, index) => {
-          const hasMultipleBranches = message.children && message.children.length > 1
-          const currentChildId = currentChat.currentBranchPath[index + 1]
+        {streamingMessage && (
+          <Box sx={{ display: 'flex', justifyContent: 'flex-start', mb: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', width: '100%' }}>
+              <Avatar sx={{ bgcolor: 'secondary.main', mx: 1 }}>
+                <SmartToyIcon />
+              </Avatar>
+              <Paper sx={{ p: 2, bgcolor: 'white' }}>
+                {streamingMessage.thinking && (
+                  <Box sx={{ mb: 2 }}>
+                    <Chip label="Thinking" size="small" sx={{ mb: 1 }} color="primary" variant="outlined" />
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        color: 'text.secondary',
+                        fontStyle: 'italic',
+                        whiteSpace: 'pre-wrap',
+                        pl: 2,
+                        borderLeft: '2px solid',
+                        borderColor: 'primary.main',
+                      }}
+                    >
+                      {streamingMessage.thinking}
+                    </Typography>
+                  </Box>
+                )}
+                {streamingMessage.content && (
+                  <Box
+                    sx={{
+                      '& p': { margin: 0, marginBottom: 1 },
+                      '& pre': { bgcolor: 'grey.100', p: 1, borderRadius: 1, overflow: 'auto', my: 1 },
+                      '& code': { bgcolor: 'grey.100', px: 0.5, py: 0.25, borderRadius: 0.5, fontSize: '0.9em' },
+                      '& pre code': { bgcolor: 'transparent', p: 0 },
+                      '& ul, & ol': { marginTop: 0.5, marginBottom: 0.5, paddingLeft: 3 },
+                      '& h1, & h2, & h3, & h4, & h5, & h6': { marginTop: 1, marginBottom: 0.5 },
+                    }}
+                  >
+                    <ReactMarkdown
+                      remarkPlugins={[remarkMath]}
+                      rehypePlugins={[rehypeHighlight, rehypeKatex]}
+                    >
+                      {streamingMessage.content}
+                    </ReactMarkdown>
+                  </Box>
+                )}
+                <CircularProgress size={16} sx={{ mt: 1 }} />
+              </Paper>
+            </Box>
+          </Box>
+        )}
+
+        {(() => {
+          const messages = getCurrentBranchMessages()
+          return [...messages].reverse().map((message, index) => {
+            const originalIndex = messages.length - 1 - index
+            const hasMultipleBranches = message.children && message.children.length > 1
+            const currentChildId = currentChat.currentBranchPath[originalIndex + 1]
 
           return (
             <Box key={message.id}>
@@ -1084,54 +1148,8 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
               )}
             </Box>
           )
-        })}
-
-        {streamingMessage && (
-          <Box sx={{ display: 'flex', justifyContent: 'flex-start', mb: 2 }}>
-            <Box sx={{ display: 'flex', alignItems: 'flex-start', width: '100%' }}>
-              <Avatar sx={{ bgcolor: 'secondary.main', mx: 1 }}>
-                <SmartToyIcon />
-              </Avatar>
-              <Paper sx={{ p: 2, bgcolor: 'white' }}>
-                {streamingMessage.thinking && (
-                  <Box sx={{ mb: 2 }}>
-                    <Chip label="Thinking" size="small" sx={{ mb: 1 }} color="primary" variant="outlined" />
-                    <Typography
-                      variant="body2"
-                      sx={{
-                        color: 'text.secondary',
-                        fontStyle: 'italic',
-                        whiteSpace: 'pre-wrap',
-                        pl: 2,
-                        borderLeft: '2px solid',
-                        borderColor: 'primary.main',
-                      }}
-                    >
-                      {streamingMessage.thinking}
-                    </Typography>
-                  </Box>
-                )}
-                {streamingMessage.content && (
-                  <Box
-                    sx={{
-                      '& p': { margin: 0, marginBottom: 1 },
-                      '& pre': { bgcolor: 'grey.100', p: 1, borderRadius: 1, overflow: 'auto', my: 1 },
-                      '& code': { bgcolor: 'grey.100', px: 0.5, py: 0.25, borderRadius: 0.5, fontSize: '0.9em' },
-                      '& pre code': { bgcolor: 'transparent', p: 0 },
-                      '& ul, & ol': { marginTop: 0.5, marginBottom: 0.5, paddingLeft: 3 },
-                      '& h1, & h2, & h3, & h4, & h5, & h6': { marginTop: 1, marginBottom: 0.5 },
-                    }}
-                  >
-                    <ReactMarkdown rehypePlugins={[rehypeHighlight]}>{streamingMessage.content}</ReactMarkdown>
-                  </Box>
-                )}
-                <CircularProgress size={16} sx={{ mt: 1 }} />
-              </Paper>
-            </Box>
-          </Box>
-        )}
-
-        <div ref={messagesEndRef} />
+        })
+        })()}
       </Box>
 
       {/* Branch selection menu */}
