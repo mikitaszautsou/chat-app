@@ -27,6 +27,7 @@ import 'highlight.js/styles/github.css'
 import { createProvider } from '../providers'
 import { EmojiProvider } from '../providers'
 import { chatsAPI } from '../api/chats'
+import { getApiKeyForProvider } from '../utils/providerUtils'
 
 // Generate unique ID for messages
 const generateId = () => {
@@ -40,6 +41,8 @@ function ChatScreen({ chatId, onBack }) {
   const [streamingMessage, setStreamingMessage] = useState(null)
   const [branchMenuAnchor, setBranchMenuAnchor] = useState(null)
   const [selectedMessageForBranch, setSelectedMessageForBranch] = useState(null)
+  const [modelMenuAnchor, setModelMenuAnchor] = useState(null)
+  const [availableModels, setAvailableModels] = useState([])
   const messagesEndRef = useRef(null)
 
   useEffect(() => {
@@ -74,6 +77,21 @@ function ChatScreen({ chatId, onBack }) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [currentChat?.messages, streamingMessage])
 
+  useEffect(() => {
+    // Load available models when chat loads
+    if (currentChat?.provider) {
+      try {
+        const providerName = currentChat.provider.toLowerCase()
+        const provider = createProvider(providerName, 'dummy-key-for-models')
+        const models = provider.getModels()
+        setAvailableModels(models)
+      } catch (error) {
+        console.error('Error loading models:', error)
+        setAvailableModels([])
+      }
+    }
+  }, [currentChat?.provider])
+
   const updateChat = async (updatedChat) => {
     try {
       console.log('💾 Saving chat:', {
@@ -92,21 +110,31 @@ function ChatScreen({ chatId, onBack }) {
 
   // Migrate old chats to new branching structure
   const migrateChat = (chat) => {
-    // Check if already migrated
-    if (chat.messagesMap) {
-      return chat
+    let migratedChat = { ...chat }
+
+    // Add default provider and model if missing
+    if (!migratedChat.provider) {
+      migratedChat.provider = 'Anthropic'
+    }
+    if (!migratedChat.model) {
+      migratedChat.model = 'claude-sonnet-4-5-20250929'
+    }
+
+    // Check if already migrated to branching structure
+    if (migratedChat.messagesMap) {
+      return migratedChat
     }
 
     // Handle empty or no messages
-    if (!chat.messages || chat.messages.length === 0) {
-      return { ...chat, messagesMap: {}, rootMessageIds: [], currentBranchPath: [] }
+    if (!migratedChat.messages || migratedChat.messages.length === 0) {
+      return { ...migratedChat, messagesMap: {}, rootMessageIds: [], currentBranchPath: [] }
     }
 
     const messagesMap = {}
     const rootMessageIds = []
     const currentBranchPath = []
 
-    chat.messages.forEach((msg, index) => {
+    migratedChat.messages.forEach((msg, index) => {
       const id = generateId()
       const parentId = index > 0 ? currentBranchPath[index - 1] : null
 
@@ -130,7 +158,7 @@ function ChatScreen({ chatId, onBack }) {
     })
 
     return {
-      ...chat,
+      ...migratedChat,
       messagesMap,
       rootMessageIds,
       currentBranchPath,
@@ -242,6 +270,26 @@ function ChatScreen({ chatId, onBack }) {
     setBranchMenuAnchor(null)
   }
 
+  const handleModelMenuOpen = (event) => {
+    setModelMenuAnchor(event.currentTarget)
+  }
+
+  const handleModelMenuClose = () => {
+    setModelMenuAnchor(null)
+  }
+
+  const handleModelChange = async (modelId) => {
+    if (!currentChat) return
+
+    const updatedChat = {
+      ...currentChat,
+      model: modelId,
+    }
+
+    await updateChat(updatedChat)
+    handleModelMenuClose()
+  }
+
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || isLoading || !currentChat) return
 
@@ -304,7 +352,14 @@ function ChatScreen({ chatId, onBack }) {
           content: msg.content,
         }))
 
-      const provider = createProvider('anthropic', import.meta.env.VITE_ANTHROPIC_API_KEY || 'dummy-key')
+      const providerName = currentChat.provider.toLowerCase()
+      const apiKey = getApiKeyForProvider(providerName)
+
+      if (!apiKey) {
+        throw new Error(`No API key found for ${currentChat.provider}. Please add your API key to the .env file.`)
+      }
+
+      const provider = createProvider(providerName, apiKey)
 
       const assistantMessage = await provider.sendMessage(
         branchMessages,
@@ -499,12 +554,48 @@ function ChatScreen({ chatId, onBack }) {
           <IconButton edge="start" color="inherit" onClick={onBack}>
             <ArrowBackIcon />
           </IconButton>
-          <Box sx={{ ml: 2 }}>
+          <Box sx={{ ml: 2, flexGrow: 1 }}>
             <Typography variant="h6">{currentChat.title}</Typography>
-            <Typography variant="caption">{currentChat.provider}</Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Typography variant="caption">{currentChat.provider}</Typography>
+              {currentChat.model && (
+                <Chip
+                  label={availableModels.find(m => m.id === currentChat.model)?.name || currentChat.model}
+                  size="small"
+                  onClick={handleModelMenuOpen}
+                  sx={{
+                    height: '20px',
+                    fontSize: '0.7rem',
+                    cursor: 'pointer',
+                    bgcolor: 'rgba(255, 255, 255, 0.2)',
+                    color: 'white',
+                    '&:hover': {
+                      bgcolor: 'rgba(255, 255, 255, 0.3)',
+                    },
+                  }}
+                />
+              )}
+            </Box>
           </Box>
         </Toolbar>
       </AppBar>
+
+      {/* Model Selection Menu */}
+      <Menu
+        anchorEl={modelMenuAnchor}
+        open={Boolean(modelMenuAnchor)}
+        onClose={handleModelMenuClose}
+      >
+        {availableModels.map((model) => (
+          <MenuItem
+            key={model.id}
+            onClick={() => handleModelChange(model.id)}
+            selected={model.id === currentChat?.model}
+          >
+            {model.name}
+          </MenuItem>
+        ))}
+      </Menu>
 
       <Box sx={{ flex: 1, overflow: 'auto', p: 2, bgcolor: 'grey.50' }}>
         {getCurrentBranchMessages().map((message, index) => {

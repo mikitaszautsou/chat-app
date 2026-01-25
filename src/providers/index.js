@@ -1,8 +1,12 @@
 import AnthropicProvider from './AnthropicProvider'
+import GeminiProvider from './GeminiProvider'
+import DeepSeekProvider from './DeepSeekProvider'
 import EmojiProvider from './EmojiProvider'
 
 const PROVIDERS = {
   anthropic: AnthropicProvider,
+  gemini: GeminiProvider,
+  deepseek: DeepSeekProvider,
 }
 
 /**
@@ -29,4 +33,6 @@ export function getAvailableProviders() {
 
 export { default as BaseProvider } from './BaseProvider'
 export { default as AnthropicProvider } from './AnthropicProvider'
+export { default as GeminiProvider } from './GeminiProvider'
+export { default as DeepSeekProvider } from './DeepSeekProvider'
 export { default as EmojiProvider } from './EmojiProvider'

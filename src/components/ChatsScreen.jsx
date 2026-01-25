@@ -30,6 +30,7 @@ import MoreVertIcon from '@mui/icons-material/MoreVert'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
 import { chatsAPI } from '../api/chats'
+import ProviderSettingsDialog from './ProviderSettingsDialog'
 
 function ChatsScreen({ onChatClick }) {
   const [chats, setChats] = useState([])
@@ -38,6 +39,7 @@ function ChatsScreen({ onChatClick }) {
   const [selectedChat, setSelectedChat] = useState(null)
   const [renameDialogOpen, setRenameDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false)
   const [newTitle, setNewTitle] = useState('')
 
   useEffect(() => {
@@ -94,23 +96,30 @@ function ChatsScreen({ onChatClick }) {
     }
   }
 
-  const handleNewChat = async () => {
+  const handleNewChat = () => {
+    setSettingsDialogOpen(true)
+  }
+
+  const handleSettingsConfirm = async (settings) => {
+    const { provider, model } = settings
+
     const newChat = {
       id: Date.now(),
       title: `New Chat ${chats.length + 1}`,
-      provider: 'Anthropic',
+      provider: provider.charAt(0).toUpperCase() + provider.slice(1),
       lastMessage: 'Start chatting...',
       timestamp: new Date().toISOString(),
       messagesMap: {},
       rootMessageIds: [],
       currentBranchPath: [],
-      model: 'claude-sonnet-4-5-20250929',
+      model: model,
       emoji: '💬', // Default emoji until first message
     }
 
     try {
       await chatsAPI.save(newChat)
       setChats([newChat, ...chats])
+      setSettingsDialogOpen(false)
       if (onChatClick) {
         onChatClick(newChat.id)
       }
@@ -377,6 +386,13 @@ function ChatsScreen({ onChatClick }) {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Provider Settings Dialog */}
+      <ProviderSettingsDialog
+        open={settingsDialogOpen}
+        onClose={() => setSettingsDialogOpen(false)}
+        onConfirm={handleSettingsConfirm}
+      />
     </Box>
   )
 }
