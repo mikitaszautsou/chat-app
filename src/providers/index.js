@@ -1,4 +1,5 @@
 import AnthropicProvider from './AnthropicProvider'
+import EmojiProvider from './EmojiProvider'
 
 const PROVIDERS = {
   anthropic: AnthropicProvider,
@@ -28,3 +29,4 @@ export function getAvailableProviders() {
 
 export { default as BaseProvider } from './BaseProvider'
 export { default as AnthropicProvider } from './AnthropicProvider'
+export { default as EmojiProvider } from './EmojiProvider'

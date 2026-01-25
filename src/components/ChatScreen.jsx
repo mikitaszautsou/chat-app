@@ -25,6 +25,7 @@ import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import 'highlight.js/styles/github.css'
 import { createProvider } from '../providers'
+import { EmojiProvider } from '../providers'
 import { chatsAPI } from '../api/chats'
 
 // Generate unique ID for messages
@@ -182,6 +183,7 @@ function ChatScreen({ chatId, onBack }) {
 
     const userMessageId = generateId()
     const parentId = getLastMessageId()
+    const isFirstMessage = !parentId && Object.keys(currentChat.messagesMap).length === 0
 
     const userMessage = {
       id: userMessageId,
@@ -280,13 +282,35 @@ function ChatScreen({ chatId, onBack }) {
       // Update branch path
       const finalBranchPath = [...updatedBranchPath, assistantMessageId]
 
-      const finalChat = {
+      let finalChat = {
         ...updatedChat,
         messagesMap: finalMessagesMap,
         currentBranchPath: finalBranchPath,
         lastMessage: assistantMessage.content.find(c => c.type === 'text')?.text || 'No response',
         timestamp: new Date().toISOString(),
       }
+
+      // Generate emoji and title for first message
+      if (isFirstMessage) {
+        try {
+          const emojiProvider = new EmojiProvider(import.meta.env.VITE_ANTHROPIC_API_KEY || 'dummy-key')
+
+          // Generate both emoji and title in parallel
+          const [emoji, title] = await Promise.all([
+            emojiProvider.generateEmoji(inputMessage.trim()),
+            emojiProvider.generateTitle(inputMessage.trim())
+          ])
+
+          finalChat = {
+            ...finalChat,
+            emoji: emoji,
+            title: title,
+          }
+        } catch (error) {
+          console.error('Error generating emoji/title:', error)
+        }
+      }
+
       updateChat(finalChat)
     } catch (error) {
       console.error('Error sending message:', error)

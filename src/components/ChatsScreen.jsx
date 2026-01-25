@@ -15,15 +15,30 @@ import {
   Divider,
   Container,
   CircularProgress,
+  Menu,
+  MenuItem,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  TextField,
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import SmartToyIcon from '@mui/icons-material/SmartToy'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
+import EditIcon from '@mui/icons-material/Edit'
+import DeleteIcon from '@mui/icons-material/Delete'
 import { chatsAPI } from '../api/chats'
 
 function ChatsScreen({ onChatClick }) {
   const [chats, setChats] = useState([])
   const [loading, setLoading] = useState(true)
+  const [menuAnchor, setMenuAnchor] = useState(null)
+  const [selectedChat, setSelectedChat] = useState(null)
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [newTitle, setNewTitle] = useState('')
 
   useEffect(() => {
     loadChats()
@@ -44,6 +59,7 @@ function ChatsScreen({ onChatClick }) {
           rootMessageIds: [],
           currentBranchPath: [],
           model: 'claude-sonnet-4-5-20250929',
+          emoji: '💬', // Default emoji
         }
         await chatsAPI.save(initialChat)
         setChats([initialChat])
@@ -89,6 +105,7 @@ function ChatsScreen({ onChatClick }) {
       rootMessageIds: [],
       currentBranchPath: [],
       model: 'claude-sonnet-4-5-20250929',
+      emoji: '💬', // Default emoji until first message
     }
 
     try {
@@ -99,6 +116,61 @@ function ChatsScreen({ onChatClick }) {
       }
     } catch (error) {
       console.error('Error creating new chat:', error)
+    }
+  }
+
+  const handleMenuOpen = (event, chat) => {
+    event.stopPropagation()
+    setMenuAnchor(event.currentTarget)
+    setSelectedChat(chat)
+  }
+
+  const handleMenuClose = () => {
+    setMenuAnchor(null)
+    setSelectedChat(null)
+  }
+
+  const handleRenameClick = () => {
+    setNewTitle(selectedChat.title)
+    setRenameDialogOpen(true)
+    setMenuAnchor(null) // Close menu but keep selectedChat
+  }
+
+  const handleDeleteClick = () => {
+    setDeleteDialogOpen(true)
+    setMenuAnchor(null) // Close menu but keep selectedChat
+  }
+
+  const handleRenameConfirm = async () => {
+    if (!newTitle.trim() || !selectedChat) return
+
+    try {
+      const updatedChat = {
+        ...selectedChat,
+        title: newTitle.trim(),
+      }
+      await chatsAPI.save(updatedChat)
+      setChats(chats.map(chat =>
+        chat.id === selectedChat.id ? updatedChat : chat
+      ))
+      setRenameDialogOpen(false)
+      setSelectedChat(null)
+      setNewTitle('')
+    } catch (error) {
+      console.error('Error renaming chat:', error)
+    }
+  }
+
+  const handleDeleteConfirm = async () => {
+    if (!selectedChat) return
+
+    try {
+      await chatsAPI.delete(selectedChat.id)
+      setChats(chats.filter(chat => chat.id !== selectedChat.id))
+      setDeleteDialogOpen(false)
+      setSelectedChat(null)
+    } catch (error) {
+      console.error('Error deleting chat:', error)
     }
   }
 
@@ -133,11 +205,22 @@ function ChatsScreen({ onChatClick }) {
           {chats.map((chat, index) => (
             <Box key={chat.id}>
               {index > 0 && <Divider />}
-              <ListItem disablePadding>
+              <ListItem
+                disablePadding
+                secondaryAction={
+                  <IconButton
+                    edge="end"
+                    aria-label="more"
+                    onClick={(e) => handleMenuOpen(e, chat)}
+                  >
+                    <MoreVertIcon />
+                  </IconButton>
+                }
+              >
                 <ListItemButton onClick={() => handleChatClick(chat.id)}>
                   <ListItemAvatar>
-                    <Avatar sx={{ bgcolor: 'primary.main' }}>
-                      <SmartToyIcon />
+                    <Avatar sx={{ bgcolor: 'primary.main', fontSize: '1.5rem' }}>
+                      {chat.emoji || <SmartToyIcon />}
                     </Avatar>
                   </ListItemAvatar>
                   <ListItemText
@@ -206,6 +289,94 @@ function ChatsScreen({ onChatClick }) {
       >
         <AddIcon />
       </Fab>
+
+      {/* Context Menu */}
+      <Menu
+        anchorEl={menuAnchor}
+        open={Boolean(menuAnchor)}
+        onClose={handleMenuClose}
+      >
+        <MenuItem onClick={handleRenameClick}>
+          <EditIcon sx={{ mr: 1 }} fontSize="small" />
+          Rename
+        </MenuItem>
+        <MenuItem onClick={handleDeleteClick} sx={{ color: 'error.main' }}>
+          <DeleteIcon sx={{ mr: 1 }} fontSize="small" />
+          Delete
+        </MenuItem>
+      </Menu>
+
+      {/* Rename Dialog */}
+      <Dialog
+        open={renameDialogOpen}
+        onClose={() => {
+          setRenameDialogOpen(false)
+          setSelectedChat(null)
+          setNewTitle('')
+        }}
+      >
+        <DialogTitle>Rename Chat</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Chat Title"
+            type="text"
+            fullWidth
+            variant="outlined"
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
+            onKeyPress={(e) => {
+              if (e.key === 'Enter') {
+                handleRenameConfirm()
+              }
+            }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              setRenameDialogOpen(false)
+              setSelectedChat(null)
+              setNewTitle('')
+            }}
+          >
+            Cancel
+          </Button>
+          <Button onClick={handleRenameConfirm} variant="contained">
+            Rename
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => {
+          setDeleteDialogOpen(false)
+          setSelectedChat(null)
+        }}
+      >
+        <DialogTitle>Delete Chat</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to delete "{selectedChat?.title}"? This action cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              setDeleteDialogOpen(false)
+              setSelectedChat(null)
+            }}
+          >
+            Cancel
+          </Button>
+          <Button onClick={handleDeleteConfirm} variant="contained" color="error">
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }
