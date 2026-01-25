@@ -16,6 +16,9 @@ dist-ssr
 .env
 .env.local
 
+# Chat data (user content)
+chats/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
