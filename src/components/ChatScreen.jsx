@@ -48,8 +48,17 @@ function ChatScreen({ chatId, onBack }) {
 
   const loadChat = async () => {
     try {
+      console.log('📥 Loading chat:', chatId)
       const chat = await chatsAPI.getById(chatId)
+      console.log('📥 Loaded from API:', {
+        messagesMapKeys: Object.keys(chat.messagesMap || {}),
+        currentBranchPath: chat.currentBranchPath
+      })
       const migratedChat = migrateChat(chat)
+      console.log('📥 After migration:', {
+        messagesMapKeys: Object.keys(migratedChat.messagesMap || {}),
+        currentBranchPath: migratedChat.currentBranchPath
+      })
       setCurrentChat(migratedChat)
 
       // Save migrated chat back if migration occurred
@@ -67,8 +76,15 @@ function ChatScreen({ chatId, onBack }) {
 
   const updateChat = async (updatedChat) => {
     try {
+      console.log('💾 Saving chat:', {
+        chatId: updatedChat.id,
+        currentBranchPath: updatedChat.currentBranchPath,
+        messagesMapSize: Object.keys(updatedChat.messagesMap).length,
+        messagesMapKeys: Object.keys(updatedChat.messagesMap)
+      })
       await chatsAPI.save(updatedChat)
       setCurrentChat(updatedChat)
+      console.log('✅ Chat saved successfully')
     } catch (error) {
       console.error('Error updating chat:', error)
     }
@@ -126,7 +142,23 @@ function ChatScreen({ chatId, onBack }) {
   const getCurrentBranchMessages = () => {
     if (!currentChat || !currentChat.messagesMap) return []
 
-    return currentChat.currentBranchPath.map(id => currentChat.messagesMap[id]).filter(Boolean)
+    console.log('📖 Getting current branch messages:', {
+      branchPath: currentChat.currentBranchPath,
+      messagesMapKeys: Object.keys(currentChat.messagesMap)
+    })
+
+    const messages = currentChat.currentBranchPath
+      .map(id => {
+        const msg = currentChat.messagesMap[id]
+        if (!msg) {
+          console.warn('Message not found in map:', id)
+        }
+        return msg
+      })
+      .filter(Boolean)
+
+    console.log('📖 Returning messages:', messages.map(m => ({ id: m.id, role: m.role })))
+    return messages
   }
 
   // Get the last message ID in current branch
@@ -138,7 +170,7 @@ function ChatScreen({ chatId, onBack }) {
   }
 
   // Handle branching from a specific message
-  const handleBranchFrom = (messageId) => {
+  const handleBranchFrom = async (messageId) => {
     // Find the index of the message in current branch
     const messageIndex = currentChat.currentBranchPath.indexOf(messageId)
     if (messageIndex === -1) return
@@ -151,30 +183,62 @@ function ChatScreen({ chatId, onBack }) {
       currentBranchPath: newBranchPath,
     }
 
-    updateChat(updatedChat)
+    await updateChat(updatedChat)
     setBranchMenuAnchor(null)
   }
 
   // Switch to a different branch (child)
-  const handleSwitchToBranch = (childMessageId) => {
+  const handleSwitchToBranch = async (childMessageId) => {
+    console.log('=== SWITCHING TO BRANCH ===')
+    console.log('Target message ID:', childMessageId)
+    console.log('Current messagesMap keys:', Object.keys(currentChat.messagesMap))
+
     const message = currentChat.messagesMap[childMessageId]
-    if (!message) return
+    if (!message) {
+      console.error('Message not found in messagesMap:', childMessageId)
+      return
+    }
 
     // Build path from root to this message
     const newPath = []
     let currentId = childMessageId
 
+    // First, traverse up to root to build the path
     while (currentId) {
       newPath.unshift(currentId)
-      currentId = currentChat.messagesMap[currentId].parentId
+      const msg = currentChat.messagesMap[currentId]
+      console.log('Adding to path (backward):', currentId, msg?.role)
+      currentId = msg?.parentId
     }
+
+    // Then, traverse down to the end of this branch
+    // Follow the first child until we reach a message with no children or multiple children
+    let lastId = childMessageId
+    while (true) {
+      const msg = currentChat.messagesMap[lastId]
+      if (!msg || !msg.children || msg.children.length === 0) {
+        // Reached end of branch (no children)
+        break
+      }
+      if (msg.children.length > 1) {
+        // Multiple branches - stop here
+        break
+      }
+      // Only one child - continue to that child
+      lastId = msg.children[0]
+      newPath.push(lastId)
+      console.log('Adding to path (forward):', lastId, currentChat.messagesMap[lastId]?.role)
+    }
+
+    console.log('New branch path:', newPath)
 
     const updatedChat = {
       ...currentChat,
       currentBranchPath: newPath,
     }
 
-    updateChat(updatedChat)
+    await updateChat(updatedChat)
+    console.log('Branch switched and saved')
     setBranchMenuAnchor(null)
   }
 
@@ -225,7 +289,7 @@ function ChatScreen({ chatId, onBack }) {
       timestamp: new Date().toISOString(),
     }
 
-    updateChat(updatedChat)
+    await updateChat(updatedChat)
     setInputMessage('')
     setIsLoading(true)
     setStreamingMessage({ type: 'text', content: '', thinking: '' })
@@ -311,7 +375,11 @@ function ChatScreen({ chatId, onBack }) {
         }
       }
 
-      updateChat(finalChat)
+      console.log('✉️ Final chat before save:', {
+        messagesMapKeys: Object.keys(finalChat.messagesMap),
+        finalBranchPath: finalChat.currentBranchPath
+      })
+      await updateChat(finalChat)
     } catch (error) {
       console.error('Error sending message:', error)
 
@@ -337,7 +405,7 @@ function ChatScreen({ chatId, onBack }) {
 
       const errorBranchPath = [...updatedBranchPath, errorMessageId]
 
-      updateChat({
+      await updateChat({
         ...updatedChat,
         messagesMap: errorMessagesMap,
         currentBranchPath: errorBranchPath,
