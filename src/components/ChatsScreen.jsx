@@ -31,10 +31,12 @@ import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
 import SearchIcon from '@mui/icons-material/Search'
 import ClearIcon from '@mui/icons-material/Clear'
+import Brightness4Icon from '@mui/icons-material/Brightness4'
+import Brightness7Icon from '@mui/icons-material/Brightness7'
 import { chatsAPI } from '../api/chats'
 import ProviderSettingsDialog from './ProviderSettingsDialog'
 
-function ChatsScreen({ onChatClick }) {
+function ChatsScreen({ onChatClick, themeMode, onToggleTheme }) {
   const [chats, setChats] = useState([])
   const [loading, setLoading] = useState(true)
   const [menuAnchor, setMenuAnchor] = useState(null)
@@ -273,6 +275,9 @@ function ChatsScreen({ onChatClick }) {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             AI Chat App
           </Typography>
+          <IconButton color="inherit" onClick={onToggleTheme} sx={{ mr: 1 }}>
+            {themeMode === 'dark' ? <Brightness7Icon /> : <Brightness4Icon />}
+          </IconButton>
           <IconButton color="inherit">
             <MoreVertIcon />
           </IconButton>

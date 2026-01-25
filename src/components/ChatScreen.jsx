@@ -32,6 +32,8 @@ import SaveIcon from '@mui/icons-material/Save'
 import CancelIcon from '@mui/icons-material/Cancel'
 import ExpandLessIcon from '@mui/icons-material/ExpandLess'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
+import Brightness4Icon from '@mui/icons-material/Brightness4'
+import Brightness7Icon from '@mui/icons-material/Brightness7'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import 'highlight.js/styles/github.css'
@@ -45,7 +47,7 @@ const generateId = () => {
   return crypto.randomUUID()
 }
 
-function ChatScreen({ chatId, onBack }) {
+function ChatScreen({ chatId, onBack, themeMode, onToggleTheme }) {
   const [currentChat, setCurrentChat] = useState(null)
   const [inputMessage, setInputMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -873,6 +875,9 @@ function ChatScreen({ chatId, onBack }) {
               )}
             </Box>
           </Box>
+          <IconButton color="inherit" onClick={onToggleTheme}>
+            {themeMode === 'dark' ? <Brightness7Icon /> : <Brightness4Icon />}
+          </IconButton>
         </Toolbar>
       </AppBar>
 
