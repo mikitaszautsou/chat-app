@@ -29,6 +29,8 @@ import SmartToyIcon from '@mui/icons-material/SmartToy'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
+import SearchIcon from '@mui/icons-material/Search'
+import ClearIcon from '@mui/icons-material/Clear'
 import { chatsAPI } from '../api/chats'
 import ProviderSettingsDialog from './ProviderSettingsDialog'
 
@@ -41,6 +43,7 @@ function ChatsScreen({ onChatClick }) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false)
   const [newTitle, setNewTitle] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
 
   useEffect(() => {
     loadChats()
@@ -183,6 +186,77 @@ function ChatsScreen({ onChatClick }) {
     }
   }
 
+  const fuzzyMatch = (str, query) => {
+    if (!query) return true
+    const lowerStr = str.toLowerCase()
+    const lowerQuery = query.toLowerCase()
+
+    // Simple contains check (can be made more sophisticated)
+    return lowerStr.includes(lowerQuery)
+  }
+
+  const getMessageText = (content) => {
+    if (typeof content === 'string') {
+      return content
+    }
+    if (Array.isArray(content)) {
+      return content
+        .filter(block => block.type === 'text')
+        .map(block => block.text)
+        .join(' ')
+    }
+    return ''
+  }
+
+  const searchInChat = (chat, query) => {
+    if (!query.trim()) return { matches: true, matchType: 'none' }
+
+    // Check title first (higher priority)
+    if (fuzzyMatch(chat.title, query)) {
+      return { matches: true, matchType: 'title' }
+    }
+
+    // Check message content (lower priority)
+    if (chat.messagesMap) {
+      const messageTexts = Object.values(chat.messagesMap).map(msg =>
+        getMessageText(msg.content)
+      ).join(' ')
+
+      if (fuzzyMatch(messageTexts, query)) {
+        return { matches: true, matchType: 'content' }
+      }
+    }
+
+    return { matches: false, matchType: 'none' }
+  }
+
+  const getFilteredAndSortedChats = () => {
+    if (!searchQuery.trim()) {
+      return chats
+    }
+
+    const searchResults = chats
+      .map(chat => ({
+        chat,
+        ...searchInChat(chat, searchQuery)
+      }))
+      .filter(result => result.matches)
+      .sort((a, b) => {
+        // Title matches come first
+        if (a.matchType === 'title' && b.matchType !== 'title') return -1
+        if (a.matchType !== 'title' && b.matchType === 'title') return 1
+        // Otherwise maintain original order
+        return 0
+      })
+      .map(result => result.chat)
+
+    return searchResults
+  }
+
+  const handleClearSearch = () => {
+    setSearchQuery('')
+  }
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
@@ -210,8 +284,32 @@ function ChatsScreen({ onChatClick }) {
           Your Chats
         </Typography>
 
+        {/* Search Field */}
+        <Box sx={{ mb: 2 }}>
+          <TextField
+            fullWidth
+            placeholder="Search chats..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            variant="outlined"
+            size="small"
+            InputProps={{
+              startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />,
+              endAdornment: searchQuery && (
+                <IconButton
+                  size="small"
+                  onClick={handleClearSearch}
+                  edge="end"
+                >
+                  <ClearIcon fontSize="small" />
+                </IconButton>
+              ),
+            }}
+          />
+        </Box>
+
         <List sx={{ bgcolor: 'background.paper', borderRadius: 1 }}>
-          {chats.map((chat, index) => (
+          {getFilteredAndSortedChats().map((chat, index) => (
             <Box key={chat.id}>
               {index > 0 && <Divider />}
               <ListItem
@@ -266,7 +364,7 @@ function ChatsScreen({ onChatClick }) {
           ))}
         </List>
 
-        {chats.length === 0 && (
+        {getFilteredAndSortedChats().length === 0 && (
           <Box
             sx={{
               display: 'flex',
@@ -278,10 +376,21 @@ function ChatsScreen({ onChatClick }) {
             }}
           >
             <SmartToyIcon sx={{ fontSize: 80, mb: 2, opacity: 0.3 }} />
-            <Typography variant="h6">No chats yet</Typography>
-            <Typography variant="body2">
-              Start a new chat to get started
-            </Typography>
+            {searchQuery ? (
+              <>
+                <Typography variant="h6">No chats found</Typography>
+                <Typography variant="body2">
+                  Try a different search query
+                </Typography>
+              </>
+            ) : (
+              <>
+                <Typography variant="h6">No chats yet</Typography>
+                <Typography variant="body2">
+                  Start a new chat to get started
+                </Typography>
+              </>
+            )}
           </Box>
         )}
       </Container>
