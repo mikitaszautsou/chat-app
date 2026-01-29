@@ -8,6 +8,7 @@
     "dev": "vite",
     "server": "node server.js",
     "server:dev": "nodemon server.js",
+    "start": "npm run server:dev & npm run dev",
     "build": "vite build",
     "preview": "vite preview"
   },
