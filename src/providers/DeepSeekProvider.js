@@ -43,6 +43,7 @@ class DeepSeekProvider extends BaseProvider {
     const {
       model = 'deepseek-chat',
       temperature = 1,
+      system = undefined,
     } = options
 
     // Set appropriate max_tokens based on model
@@ -56,6 +57,11 @@ class DeepSeekProvider extends BaseProvider {
 
     const formattedMessages = this.formatMessages(messages)
 
+    // Add system message if provided (OpenAI-compatible format)
+    const messagesWithSystem = system
+      ? [{ role: 'system', content: system }, ...formattedMessages]
+      : formattedMessages
+
     let fullContent = []
     let textContent = ''
     let thinkingContent = ''
@@ -64,7 +70,7 @@ class DeepSeekProvider extends BaseProvider {
     try {
       const stream = await this.client.chat.completions.create({
         model,
-        messages: formattedMessages,
+        messages: messagesWithSystem,
         max_tokens: clampedMaxTokens,
         temperature,
         stream: true,

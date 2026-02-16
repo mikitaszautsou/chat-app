@@ -52,6 +52,7 @@ class GeminiProvider extends BaseProvider {
       maxTokens = 20000,
       temperature = 1,
       thinking = true,
+      system = undefined,
     } = options
 
     const formattedMessages = this.formatMessages(messages)
@@ -62,7 +63,7 @@ class GeminiProvider extends BaseProvider {
     let inThinkingBlock = false
 
     try {
-      const genModel = this.client.getGenerativeModel({
+      const modelConfig = {
         model,
         ...(thinking && {
           generationConfig: {
@@ -73,7 +74,14 @@ class GeminiProvider extends BaseProvider {
             thinkingLevel: 'HIGH'
           }
         })
-      })
+      }
+
+      // Add system instruction if provided
+      if (system) {
+        modelConfig.systemInstruction = system
+      }
+
+      const genModel = this.client.getGenerativeModel(modelConfig)
 
       // Split messages into history and current prompt
       const history = formattedMessages.slice(0, -1)

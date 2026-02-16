@@ -38,6 +38,7 @@ import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
+import remarkGfm from 'remark-gfm'
 import 'highlight.js/styles/github.css'
 import 'katex/dist/katex.min.css'
 import { createProvider } from '../providers'
@@ -73,7 +74,7 @@ const convertMathDelimiters = (text) => {
 }
 
 // Memoize markdown plugins to prevent recreation on every render
-const remarkPlugins = [remarkMath]
+const remarkPlugins = [remarkMath, remarkGfm]
 const rehypePlugins = [rehypeHighlight, rehypeKatex]
 
 // Memoized MessageItem component to prevent unnecessary rerenders
@@ -95,6 +96,17 @@ const MessageItem = memo(function MessageItem({
 }) {
   const hasMultipleBranches = message.children && message.children.length > 1
   const currentChildId = currentChat.currentBranchPath[originalIndex + 1]
+
+  // Local state for editing to prevent parent rerenders
+  const [localEditText, setLocalEditText] = useState('')
+  const isEditingThisMessage = editingMessageId === message.id
+
+  // Sync local edit text when editing starts
+  useEffect(() => {
+    if (isEditingThisMessage && editText) {
+      setLocalEditText(editText)
+    }
+  }, [isEditingThisMessage, editText])
 
   const getMessagePreview = (content, maxLength = 150) => {
     let text = ''
@@ -122,7 +134,30 @@ const MessageItem = memo(function MessageItem({
     }
     if (typeof content === 'string') {
       return (
-        <Box sx={{ '& p': { margin: 0 }, '& pre': { bgcolor: 'grey.100', p: 1, borderRadius: 1, overflow: 'auto' } }}>
+        <Box sx={{
+          '& p': { margin: 0 },
+          '& pre': { bgcolor: 'grey.100', p: 1, borderRadius: 1, overflow: 'auto' },
+          '& table': {
+            borderCollapse: 'collapse',
+            width: '100%',
+            my: 1,
+            border: '1px solid',
+            borderColor: 'grey.300'
+          },
+          '& th, & td': {
+            border: '1px solid',
+            borderColor: 'grey.300',
+            p: 1,
+            textAlign: 'left'
+          },
+          '& th': {
+            bgcolor: 'grey.100',
+            fontWeight: 'bold'
+          },
+          '& tr:nth-of-type(even)': {
+            bgcolor: 'grey.50'
+          }
+        }}>
           <ReactMarkdown
             remarkPlugins={remarkPlugins}
             rehypePlugins={rehypePlugins}
@@ -180,6 +215,26 @@ const MessageItem = memo(function MessageItem({
                 '& pre code': { bgcolor: 'transparent', p: 0 },
                 '& ul, & ol': { marginTop: 0.5, marginBottom: 0.5, paddingLeft: 3 },
                 '& h1, & h2, & h3, & h4, & h5, & h6': { marginTop: 1, marginBottom: 0.5 },
+                '& table': {
+                  borderCollapse: 'collapse',
+                  width: '100%',
+                  my: 1,
+                  border: '1px solid',
+                  borderColor: 'grey.300'
+                },
+                '& th, & td': {
+                  border: '1px solid',
+                  borderColor: 'grey.300',
+                  p: 1,
+                  textAlign: 'left'
+                },
+                '& th': {
+                  bgcolor: 'grey.100',
+                  fontWeight: 'bold'
+                },
+                '& tr:nth-of-type(even)': {
+                  bgcolor: 'grey.50'
+                }
               }}
             >
               <ReactMarkdown
@@ -229,13 +284,16 @@ const MessageItem = memo(function MessageItem({
                 bgcolor: message.isError ? 'error.light' : message.role === 'user' ? 'primary.light' : 'white',
               }}
             >
-              {editingMessageId === message.id ? (
+              {isEditingThisMessage ? (
                 <Box>
                   <TextField
                     fullWidth
                     multiline
-                    value={editText}
-                    onChange={onEditTextChange}
+                    value={localEditText}
+                    onChange={(e) => {
+                      setLocalEditText(e.target.value)
+                      onEditTextChange(e)
+                    }}
                     autoFocus
                     variant="outlined"
                     sx={{ mb: 1 }}
@@ -367,6 +425,9 @@ const MessageItem = memo(function MessageItem({
   )
 })
 
+// Threshold for auto-collapsing long messages (characters)
+const AUTO_COLLAPSE_THRESHOLD = 500
+
 function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange }) {
   const [currentChat, setCurrentChat] = useState(null)
   const [inputMessage, setInputMessage] = useState('')
@@ -394,6 +455,19 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
     }
   }, [currentChat?.provider, onProviderChange])
 
+  // Helper function to check if a message is long
+  const isMessageLong = useCallback((content) => {
+    if (typeof content === 'string') {
+      return content.length > AUTO_COLLAPSE_THRESHOLD
+    }
+    if (Array.isArray(content)) {
+      const textBlocks = content.filter(block => block.type === 'text')
+      const totalLength = textBlocks.reduce((sum, block) => sum + block.text.length, 0)
+      return totalLength > AUTO_COLLAPSE_THRESHOLD
+    }
+    return false
+  }, [])
+
   const loadChat = async () => {
     try {
       console.log('📥 Loading chat:', chatId)
@@ -408,6 +482,15 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
         currentBranchPath: migratedChat.currentBranchPath
       })
       setCurrentChat(migratedChat)
+
+      // Auto-collapse long messages
+      const longMessageIds = new Set()
+      Object.values(migratedChat.messagesMap || {}).forEach(msg => {
+        if (isMessageLong(msg.content)) {
+          longMessageIds.add(msg.id)
+        }
+      })
+      setCollapsedMessages(longMessageIds)
 
       // Save migrated chat back if migration occurred
       if (!chat.messagesMap && migratedChat.messagesMap) {
@@ -716,6 +799,7 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
         {
           model: currentChat.model || 'claude-sonnet-4-5-20250929',
           thinking: true,
+          system: currentChat.systemPrompt, // Pass system prompt if available
         }
       )
 
@@ -871,8 +955,9 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
     })
   }, [])
 
-  const handleSendMessage = useCallback(async () => {
-    if (!inputMessage.trim() || isLoading || !currentChat) return
+  const handleSendMessage = useCallback(async (messageOverride) => {
+    const messageToSend = messageOverride || inputMessage
+    if (!messageToSend.trim() || isLoading || !currentChat) return
 
     const userMessageId = generateId()
     const parentId = getLastMessageId()
@@ -881,7 +966,7 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
     const userMessage = {
       id: userMessageId,
       role: 'user',
-      content: inputMessage.trim(),
+      content: messageToSend.trim(),
       timestamp: new Date().toISOString(),
       parentId,
       children: [],
@@ -914,12 +999,14 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
       messagesMap: updatedMessagesMap,
       rootMessageIds: updatedRootMessageIds,
       currentBranchPath: updatedBranchPath,
-      lastMessage: inputMessage.trim(),
+      lastMessage: messageToSend.trim(),
       timestamp: new Date().toISOString(),
     }
 
     await updateChat(updatedChat)
-    setInputMessage('')
+    if (!messageOverride) {
+      setInputMessage('')
+    }
     setIsLoading(true)
     setStreamingMessage({ type: 'text', content: '', thinking: '' })
 
@@ -957,6 +1044,7 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
         {
           model: currentChat.model || 'claude-sonnet-4-5-20250929',
           thinking: true,
+          system: currentChat.systemPrompt, // Pass system prompt if available
         }
       )
 
@@ -990,15 +1078,15 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
         timestamp: new Date().toISOString(),
       }
 
-      // Generate emoji and title for first message
-      if (isFirstMessage) {
+      // Generate emoji and title for first message (unless already set by prompt)
+      if (isFirstMessage && !currentChat.emoji) {
         try {
           const emojiProvider = new EmojiProvider(import.meta.env.VITE_ANTHROPIC_API_KEY || 'dummy-key')
 
           // Generate both emoji and title in parallel
           const [emoji, title] = await Promise.all([
-            emojiProvider.generateEmoji(inputMessage.trim()),
-            emojiProvider.generateTitle(inputMessage.trim())
+            emojiProvider.generateEmoji(messageToSend.trim()),
+            emojiProvider.generateTitle(messageToSend.trim())
           ])
 
           finalChat = {
@@ -1050,7 +1138,22 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
       setIsLoading(false)
       setStreamingMessage(null)
     }
-  }, [inputMessage, isLoading, currentChat])
+  }, [inputMessage, isLoading, currentChat, updateChat])
+
+  // Auto-send initial message if set by prompt
+  useEffect(() => {
+    if (currentChat?.initialMessage &&
+        Object.keys(currentChat.messagesMap).length === 0 &&
+        !isLoading) {
+      // Clear the initial message flag and send it
+      const messageToSend = currentChat.initialMessage
+      const updatedChat = { ...currentChat }
+      delete updatedChat.initialMessage
+      updateChat(updatedChat).then(() => {
+        handleSendMessage(messageToSend)
+      })
+    }
+  }, [currentChat?.id]) // Only trigger when chat loads
 
   // Add callback for branch menu opening
   const handleBranchMenuOpen = useCallback((e, message) => {
@@ -1176,6 +1279,26 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
                       '& pre code': { bgcolor: 'transparent', p: 0 },
                       '& ul, & ol': { marginTop: 0.5, marginBottom: 0.5, paddingLeft: 3 },
                       '& h1, & h2, & h3, & h4, & h5, & h6': { marginTop: 1, marginBottom: 0.5 },
+                      '& table': {
+                        borderCollapse: 'collapse',
+                        width: '100%',
+                        my: 1,
+                        border: '1px solid',
+                        borderColor: 'grey.300'
+                      },
+                      '& th, & td': {
+                        border: '1px solid',
+                        borderColor: 'grey.300',
+                        p: 1,
+                        textAlign: 'left'
+                      },
+                      '& th': {
+                        bgcolor: 'grey.100',
+                        fontWeight: 'bold'
+                      },
+                      '& tr:nth-of-type(even)': {
+                        bgcolor: 'grey.50'
+                      }
                     }}
                   >
                     <ReactMarkdown
@@ -1192,8 +1315,8 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
           </Box>
         )}
 
-        {[...currentBranchMessages].reverse().map((message, index) => {
-          const originalIndex = currentBranchMessages.length - 1 - index
+        {[...currentBranchMessages].reverse().map((message) => {
+          const originalIndex = currentBranchMessages.findIndex(m => m.id === message.id)
           return (
             <MessageItem
               key={message.id}
@@ -1260,7 +1383,7 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
             placeholder="Type a message..."
             value={inputMessage}
             onChange={(e) => setInputMessage(e.target.value)}
-            onKeyPress={(e) => {
+            onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
                 handleSendMessage()

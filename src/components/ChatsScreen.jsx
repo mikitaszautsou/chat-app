@@ -33,8 +33,11 @@ import SearchIcon from '@mui/icons-material/Search'
 import ClearIcon from '@mui/icons-material/Clear'
 import Brightness4Icon from '@mui/icons-material/Brightness4'
 import Brightness7Icon from '@mui/icons-material/Brightness7'
+import PushPinIcon from '@mui/icons-material/PushPin'
+import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined'
 import { chatsAPI } from '../api/chats'
 import ProviderSettingsDialog from './ProviderSettingsDialog'
+import PromptsDialog from './PromptsDialog'
 
 function ChatsScreen({ onChatClick, themeMode, onToggleTheme }) {
   const [chats, setChats] = useState([])
@@ -44,6 +47,7 @@ function ChatsScreen({ onChatClick, themeMode, onToggleTheme }) {
   const [renameDialogOpen, setRenameDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false)
+  const [promptsDialogOpen, setPromptsDialogOpen] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
 
@@ -102,7 +106,34 @@ function ChatsScreen({ onChatClick, themeMode, onToggleTheme }) {
   }
 
   const handleNewChat = () => {
-    setSettingsDialogOpen(true)
+    setPromptsDialogOpen(true)
+  }
+
+  const handleSelectPrompt = async (prompt) => {
+    const newChat = {
+      id: Date.now(),
+      title: `New Chat ${chats.length + 1}`,
+      provider: prompt.provider,
+      lastMessage: 'Start chatting...',
+      timestamp: new Date().toISOString(),
+      messagesMap: {},
+      rootMessageIds: [],
+      currentBranchPath: [],
+      model: prompt.model,
+      emoji: prompt.icon,
+      systemPrompt: prompt.systemPrompt, // Store system prompt for API calls
+    }
+
+    try {
+      await chatsAPI.save(newChat)
+      setChats([newChat, ...chats])
+      setPromptsDialogOpen(false)
+      if (onChatClick) {
+        onChatClick(newChat.id)
+      }
+    } catch (error) {
+      console.error('Error creating new chat:', error)
+    }
   }
 
   const handleSettingsConfirm = async (settings) => {
@@ -188,6 +219,23 @@ function ChatsScreen({ onChatClick, themeMode, onToggleTheme }) {
     }
   }
 
+  const handleTogglePin = async (event, chat) => {
+    event.stopPropagation()
+
+    try {
+      const updatedChat = {
+        ...chat,
+        isPinned: !chat.isPinned
+      }
+      await chatsAPI.save(updatedChat)
+      setChats(chats.map(c => c.id === chat.id ? updatedChat : c))
+      setMenuAnchor(null)
+      setSelectedChat(null)
+    } catch (error) {
+      console.error('Error toggling pin:', error)
+    }
+  }
+
   const fuzzyMatch = (str, query) => {
     if (!query) return true
     const lowerStr = str.toLowerCase()
@@ -233,26 +281,33 @@ function ChatsScreen({ onChatClick, themeMode, onToggleTheme }) {
   }
 
   const getFilteredAndSortedChats = () => {
-    if (!searchQuery.trim()) {
-      return chats
+    let filteredChats = chats
+
+    // Apply search filter if query exists
+    if (searchQuery.trim()) {
+      filteredChats = chats
+        .map(chat => ({
+          chat,
+          ...searchInChat(chat, searchQuery)
+        }))
+        .filter(result => result.matches)
+        .sort((a, b) => {
+          // Title matches come first
+          if (a.matchType === 'title' && b.matchType !== 'title') return -1
+          if (a.matchType !== 'title' && b.matchType === 'title') return 1
+          // Otherwise maintain original order
+          return 0
+        })
+        .map(result => result.chat)
     }
 
-    const searchResults = chats
-      .map(chat => ({
-        chat,
-        ...searchInChat(chat, searchQuery)
-      }))
-      .filter(result => result.matches)
-      .sort((a, b) => {
-        // Title matches come first
-        if (a.matchType === 'title' && b.matchType !== 'title') return -1
-        if (a.matchType !== 'title' && b.matchType === 'title') return 1
-        // Otherwise maintain original order
-        return 0
-      })
-      .map(result => result.chat)
-
-    return searchResults
+    // Sort by pinned status (pinned chats first)
+    return filteredChats.sort((a, b) => {
+      if (a.isPinned && !b.isPinned) return -1
+      if (!a.isPinned && b.isPinned) return 1
+      // If both pinned or both not pinned, maintain timestamp order
+      return new Date(b.timestamp) - new Date(a.timestamp)
+    })
   }
 
   const handleClearSearch = () => {
@@ -320,49 +375,74 @@ function ChatsScreen({ onChatClick, themeMode, onToggleTheme }) {
               <ListItem
                 disablePadding
                 secondaryAction={
-                  <IconButton
-                    edge="end"
-                    aria-label="more"
-                    onClick={(e) => handleMenuOpen(e, chat)}
-                  >
-                    <MoreVertIcon />
-                  </IconButton>
+                  <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+                    <IconButton
+                      onClick={(e) => handleTogglePin(e, chat)}
+                      sx={{
+                        color: chat.isPinned ? 'primary.main' : 'action.disabled',
+                      }}
+                    >
+                      {chat.isPinned ? <PushPinIcon /> : <PushPinOutlinedIcon />}
+                    </IconButton>
+                    <IconButton
+                      edge="end"
+                      aria-label="more"
+                      onClick={(e) => handleMenuOpen(e, chat)}
+                    >
+                      <MoreVertIcon />
+                    </IconButton>
+                  </Box>
                 }
               >
-                <ListItemButton onClick={() => handleChatClick(chat.id)}>
+                <ListItemButton onClick={() => handleChatClick(chat.id)} sx={{ pr: 12 }}>
                   <ListItemAvatar>
                     <Avatar sx={{ bgcolor: 'primary.main', fontSize: '1.5rem' }}>
                       {chat.emoji || <SmartToyIcon />}
                     </Avatar>
                   </ListItemAvatar>
-                  <ListItemText
-                    primary={chat.title}
-                    secondary={
-                      <>
-                        <Typography
-                          component="span"
-                          variant="body2"
-                          sx={{ color: 'text.primary', display: 'inline' }}
-                        >
-                          {chat.provider}
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, flex: 1 }}>
+                        <Typography variant="body1" noWrap>
+                          {chat.title}
                         </Typography>
-                        {' — ' + chat.lastMessage}
-                      </>
-                    }
-                    secondaryTypographyProps={{
-                      sx: {
+                        {chat.isPinned && (
+                          <PushPinIcon
+                            sx={{
+                              fontSize: '1rem',
+                              color: 'primary.main',
+                              transform: 'rotate(45deg)',
+                              flexShrink: 0
+                            }}
+                          />
+                        )}
+                      </Box>
+                      <Typography
+                        variant="caption"
+                        sx={{ color: 'text.secondary', ml: 2, flexShrink: 0 }}
+                      >
+                        {formatTimestamp(chat.timestamp)}
+                      </Typography>
+                    </Box>
+                    <Typography
+                      variant="body2"
+                      sx={{
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
-                      },
-                    }}
-                  />
-                  <Typography
-                    variant="caption"
-                    sx={{ color: 'text.secondary', ml: 2 }}
-                  >
-                    {formatTimestamp(chat.timestamp)}
-                  </Typography>
+                        color: 'text.secondary'
+                      }}
+                    >
+                      <Typography
+                        component="span"
+                        variant="body2"
+                        sx={{ color: 'text.primary' }}
+                      >
+                        {chat.provider}
+                      </Typography>
+                      {' — ' + chat.lastMessage}
+                    </Typography>
+                  </Box>
                 </ListItemButton>
               </ListItem>
             </Box>
@@ -419,6 +499,21 @@ function ChatsScreen({ onChatClick, themeMode, onToggleTheme }) {
         open={Boolean(menuAnchor)}
         onClose={handleMenuClose}
       >
+        <MenuItem onClick={(e) => {
+          handleTogglePin(e, selectedChat)
+        }}>
+          {selectedChat?.isPinned ? (
+            <>
+              <PushPinOutlinedIcon sx={{ mr: 1 }} fontSize="small" />
+              Unpin
+            </>
+          ) : (
+            <>
+              <PushPinIcon sx={{ mr: 1 }} fontSize="small" />
+              Pin
+            </>
+          )}
+        </MenuItem>
         <MenuItem onClick={handleRenameClick}>
           <EditIcon sx={{ mr: 1 }} fontSize="small" />
           Rename
@@ -449,7 +544,7 @@ function ChatsScreen({ onChatClick, themeMode, onToggleTheme }) {
             variant="outlined"
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
-            onKeyPress={(e) => {
+            onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 handleRenameConfirm()
               }
@@ -506,6 +601,13 @@ function ChatsScreen({ onChatClick, themeMode, onToggleTheme }) {
         open={settingsDialogOpen}
         onClose={() => setSettingsDialogOpen(false)}
         onConfirm={handleSettingsConfirm}
+      />
+
+      {/* Prompts Dialog */}
+      <PromptsDialog
+        open={promptsDialogOpen}
+        onClose={() => setPromptsDialogOpen(false)}
+        onSelectPrompt={handleSelectPrompt}
       />
     </Box>
   )

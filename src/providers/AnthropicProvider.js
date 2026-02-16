@@ -11,7 +11,7 @@ class AnthropicProvider extends BaseProvider {
     this.models = [
       { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5' },
       { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4' },
-      { id: 'claude-opus-4-5-20251101', name: 'Claude Opus 4.5' },
+      { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
       { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet' },
     ]
   }
@@ -46,6 +46,7 @@ class AnthropicProvider extends BaseProvider {
       maxTokens = 20000,
       temperature = 1,
       thinking = true,
+      system = undefined,
     } = options
 
     const formattedMessages = this.formatMessages(messages)
@@ -54,20 +55,36 @@ class AnthropicProvider extends BaseProvider {
     let textContent = ''
     let thinkingContent = ''
 
+    // Determine if this is an Opus model for special configuration
+    const isOpusModel = model.includes('opus')
+
+    // Configure max tokens and thinking budget based on model
+    const effectiveMaxTokens = isOpusModel ? 128000 : maxTokens
+    const thinkingBudget = isOpusModel ? 102400 : 16000
+
     try {
-      const stream = await this.client.messages.create({
+      const requestConfig = {
         model,
-        max_tokens: maxTokens,
+        max_tokens: effectiveMaxTokens,
         temperature,
         messages: formattedMessages,
         stream: true,
-        ...(thinking && {
-          thinking: {
-            type: 'enabled',
-            budget_tokens: 16000,
-          },
-        }),
-      })
+      }
+
+      // Add system prompt if provided
+      if (system) {
+        requestConfig.system = system
+      }
+
+      // Add thinking configuration if enabled
+      if (thinking) {
+        requestConfig.thinking = {
+          type: 'enabled',
+          budget_tokens: thinkingBudget,
+        }
+      }
+
+      const stream = await this.client.messages.create(requestConfig)
 
       for await (const event of stream) {
         if (event.type === 'content_block_start') {
