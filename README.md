@@ -2,6 +2,8 @@
 
 A multi-provider AI chat application built with React, Material UI, and Vite. Supports Anthropic Claude, Google Gemini, and DeepSeek models with advanced conversation management features.
 
+![Chat Example](screenshots/chat-example.png)
+
 ## Features
 
 ### Multi-Provider Support
@@ -17,6 +19,27 @@ A multi-provider AI chat application built with React, Material UI, and Vite. Su
 - **Message collapse/expand** - Manage long conversations with collapsible messages
 - **Model switching** - Change AI models mid-conversation
 - **Provider selection** - Choose provider and model when creating new chats
+- **Conversation tree visualization** - Interactive tree view of your entire conversation history
+
+### Conversation Tree Visualization
+
+The app includes a powerful tree view that visualizes your entire conversation structure, making it easy to navigate and understand complex branching conversations.
+
+![Conversation Tree View](screenshots/conversation-tree.png)
+
+**Features:**
+- **Interactive navigation** - Click any node to jump to that point in the conversation
+- **Visual branch indicators** - See all conversation paths at a glance
+- **Current path highlighting** - Your active conversation path is highlighted in blue
+- **Non-destructive editing** - Every edit creates a new branch, preserving all history
+- **Zoom controls** - Navigate large conversation trees with zoom and pan
+- **Mini-map** - Overview of the entire conversation structure
+
+**How to use:**
+1. Click the tree icon (🌳) in the top-right corner of any chat
+2. The tree drawer opens showing your conversation structure
+3. Click any message node to navigate to that point
+4. Send a new message or edit to create branches - all history is preserved!
 
 ### Storage & Persistence
 - File-based chat storage for reliability

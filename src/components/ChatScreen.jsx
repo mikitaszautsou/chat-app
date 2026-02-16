@@ -19,6 +19,7 @@ import {
   DialogContent,
   DialogActions,
   Button,
+  Drawer,
 } from '@mui/material'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import SendIcon from '@mui/icons-material/Send'
@@ -34,6 +35,7 @@ import ExpandLessIcon from '@mui/icons-material/ExpandLess'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import Brightness4Icon from '@mui/icons-material/Brightness4'
 import Brightness7Icon from '@mui/icons-material/Brightness7'
+import AccountTreeIcon from '@mui/icons-material/AccountTree'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import remarkMath from 'remark-math'
@@ -45,6 +47,7 @@ import { createProvider } from '../providers'
 import { EmojiProvider } from '../providers'
 import { chatsAPI } from '../api/chats'
 import { getApiKeyForProvider } from '../utils/providerUtils'
+import ConversationTree from './ConversationTree'
 
 // Generate unique ID for messages
 const generateId = () => {
@@ -442,6 +445,7 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [messageToDelete, setMessageToDelete] = useState(null)
   const [collapsedMessages, setCollapsedMessages] = useState(new Set())
+  const [treeDrawerOpen, setTreeDrawerOpen] = useState(false)
   // messagesTopRef removed - no longer needed with reversed message order
 
   useEffect(() => {
@@ -677,6 +681,21 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
     setBranchMenuAnchor(null)
   }, [currentChat])
 
+  // Handle tree node click
+  const handleTreeNodeClick = useCallback((nodeId) => {
+    if (!currentChat) return
+
+    const indexInBranch = currentChat.currentBranchPath.indexOf(nodeId)
+
+    if (indexInBranch !== -1) {
+      // Node is in current branch - truncate to that point
+      handleBranchFrom(nodeId)
+    } else {
+      // Node is in different branch - switch to it
+      handleSwitchToBranch(nodeId)
+    }
+  }, [currentChat, handleBranchFrom, handleSwitchToBranch])
+
   const handleModelMenuOpen = useCallback((event) => {
     setModelMenuAnchor(event.currentTarget)
   }, [])
@@ -712,46 +731,50 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
   const handleSaveEdit = useCallback(async () => {
     if (!currentChat || !editingMessageId || !editText.trim()) return
 
-    const editedMessage = currentChat.messagesMap[editingMessageId]
+    const originalMessage = currentChat.messagesMap[editingMessageId]
 
-    // Get all descendants of this message (responses to delete)
-    const getDescendants = (msgId) => {
-      const descendants = []
-      const msg = currentChat.messagesMap[msgId]
-      if (msg && msg.children) {
-        msg.children.forEach(childId => {
-          descendants.push(childId)
-          descendants.push(...getDescendants(childId))
-        })
-      }
-      return descendants
-    }
-
-    const toDelete = getDescendants(editingMessageId)
-
-    // Remove all descendants from messagesMap
+    // Create a NEW message with edited content (don't modify original)
     const updatedMessagesMap = { ...currentChat.messagesMap }
-    toDelete.forEach(id => {
-      delete updatedMessagesMap[id]
-    })
+    const newMessageId = generateId()
 
-    // Update the edited message
-    updatedMessagesMap[editingMessageId] = {
-      ...editedMessage,
+    const newMessage = {
+      id: newMessageId,
+      role: originalMessage.role,
       content: editText.trim(),
+      timestamp: new Date().toISOString(),
+      parentId: originalMessage.parentId,
+      children: [],
       edited: true,
       editedAt: new Date().toISOString(),
-      children: [], // Clear children since we deleted them
     }
 
-    // Update currentBranchPath - remove all deleted messages
-    const updatedBranchPath = currentChat.currentBranchPath.filter(
-      id => !toDelete.includes(id)
-    )
+    // Add new message to map
+    updatedMessagesMap[newMessageId] = newMessage
+
+    // Add new message as sibling to original (both are children of same parent)
+    let updatedRootMessageIds = currentChat.rootMessageIds
+    if (originalMessage.parentId) {
+      const parent = updatedMessagesMap[originalMessage.parentId]
+      updatedMessagesMap[originalMessage.parentId] = {
+        ...parent,
+        children: [...parent.children, newMessageId],
+      }
+    } else {
+      // Original message is a root message, add new message as another root
+      updatedRootMessageIds = [...currentChat.rootMessageIds, newMessageId]
+    }
+
+    // Update currentBranchPath - replace edited message with new message
+    const editedMessageIndex = currentChat.currentBranchPath.indexOf(editingMessageId)
+    const updatedBranchPath = [
+      ...currentChat.currentBranchPath.slice(0, editedMessageIndex),
+      newMessageId
+    ]
 
     const updatedChat = {
       ...currentChat,
       messagesMap: updatedMessagesMap,
+      rootMessageIds: updatedRootMessageIds,
       currentBranchPath: updatedBranchPath,
       lastMessage: editText.trim(),
       timestamp: new Date().toISOString(),
@@ -808,7 +831,7 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
         id: assistantMessageId,
         ...assistantMessage,
         timestamp: new Date().toISOString(),
-        parentId: editingMessageId,
+        parentId: newMessageId, // Parent is the NEW edited message, not original
         children: [],
       }
 
@@ -816,8 +839,8 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
       const finalMessagesMap = {
         ...updatedMessagesMap,
         [assistantMessageId]: finalAssistantMessage,
-        [editingMessageId]: {
-          ...updatedMessagesMap[editingMessageId],
+        [newMessageId]: {
+          ...updatedMessagesMap[newMessageId],
           children: [assistantMessageId],
         },
       }
@@ -844,15 +867,15 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
         content: [{ type: 'text', text: `Error: ${error.message}` }],
         timestamp: new Date().toISOString(),
         isError: true,
-        parentId: editingMessageId,
+        parentId: newMessageId, // Parent is the NEW edited message, not original
         children: [],
       }
 
       const errorMessagesMap = {
         ...updatedMessagesMap,
         [errorMessageId]: errorMessage,
-        [editingMessageId]: {
-          ...updatedMessagesMap[editingMessageId],
+        [newMessageId]: {
+          ...updatedMessagesMap[newMessageId],
           children: [errorMessageId],
         },
       }
@@ -1221,6 +1244,11 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
               )}
             </Box>
           </Box>
+          <Tooltip title="View Conversation Tree">
+            <IconButton color="inherit" onClick={() => setTreeDrawerOpen(!treeDrawerOpen)}>
+              <AccountTreeIcon />
+            </IconButton>
+          </Tooltip>
           <IconButton color="inherit" onClick={onToggleTheme}>
             {themeMode === 'dark' ? <Brightness7Icon /> : <Brightness4Icon />}
           </IconButton>
@@ -1418,6 +1446,53 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Conversation Tree Drawer */}
+      <Drawer
+        anchor="right"
+        open={treeDrawerOpen}
+        onClose={() => setTreeDrawerOpen(false)}
+        sx={{
+          '& .MuiDrawer-paper': {
+            width: { xs: '100%', sm: 700, md: 900, lg: 1000 },
+            boxSizing: 'border-box',
+          },
+        }}
+      >
+        <Box
+          sx={{
+            height: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
+          <Box
+            sx={{
+              p: 2,
+              borderBottom: 1,
+              borderColor: 'divider',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <Typography variant="h6">Conversation Tree</Typography>
+            <IconButton onClick={() => setTreeDrawerOpen(false)}>
+              <CancelIcon />
+            </IconButton>
+          </Box>
+          <Box sx={{ flex: 1, overflow: 'hidden' }}>
+            {currentChat && (
+              <ConversationTree
+                messagesMap={currentChat.messagesMap || {}}
+                rootMessageIds={currentChat.rootMessageIds || []}
+                currentBranchPath={currentChat.currentBranchPath || []}
+                onNodeClick={handleTreeNodeClick}
+              />
+            )}
+          </Box>
+        </Box>
+      </Drawer>
     </Box>
   )
 }
