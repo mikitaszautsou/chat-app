@@ -1,14 +1,15 @@
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { GoogleGenAI } from '@google/genai'
 import BaseProvider from './BaseProvider'
 
 class GeminiProvider extends BaseProvider {
   constructor(apiKey) {
     super(apiKey)
-    this.client = new GoogleGenerativeAI(apiKey)
+    this.client = new GoogleGenAI({ apiKey })
     this.models = [
+      { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview' },
       { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview' },
-      { id: 'gemini-2.0-flash-thinking-exp', name: 'Gemini 2.0 Flash Thinking (Experimental)' },
-      { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (Experimental)' },
+      { id: 'gemini-2.5-flash-preview-05-20', name: 'Gemini 2.5 Flash Preview' },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
     ]
   }
 
@@ -32,7 +33,6 @@ class GeminiProvider extends BaseProvider {
       if (typeof msg.content === 'string') {
         text = msg.content
       } else {
-        // Extract text from content array, ignoring thinking blocks
         text = msg.content
           .filter(c => c.type === 'text')
           .map(c => c.text)
@@ -48,8 +48,8 @@ class GeminiProvider extends BaseProvider {
 
   async sendMessage(messages, onChunk, options = {}) {
     const {
-      model = 'gemini-3-pro-preview',
-      maxTokens = 20000,
+      model = 'gemini-3.1-pro-preview',
+      maxTokens = 65536,
       temperature = 1,
       thinking = true,
       system = undefined,
@@ -60,106 +60,54 @@ class GeminiProvider extends BaseProvider {
     let fullContent = []
     let textContent = ''
     let thinkingContent = ''
-    let inThinkingBlock = false
 
     try {
-      const modelConfig = {
-        model,
-        ...(thinking && {
-          generationConfig: {
-            maxOutputTokens: maxTokens,
-            temperature,
-          },
-          thinkingConfig: {
-            thinkingLevel: 'HIGH'
-          }
-        })
+      const config = {
+        maxOutputTokens: maxTokens,
+        temperature,
       }
 
-      // Add system instruction if provided
-      if (system) {
-        modelConfig.systemInstruction = system
-      }
-
-      const genModel = this.client.getGenerativeModel(modelConfig)
-
-      // Split messages into history and current prompt
-      const history = formattedMessages.slice(0, -1)
-      const currentMessage = formattedMessages[formattedMessages.length - 1]
-
-      const chat = genModel.startChat({
-        history,
-      })
-
-      const result = await chat.sendMessageStream(currentMessage.parts)
-
-      for await (const chunk of result.stream) {
-        const chunkText = chunk.text()
-
-        if (!chunkText) continue
-
-        // Detect thinking blocks in the response
-        // Gemini may output thinking in special markers or as regular text
-        // For now, we'll treat all streamed content as text
-        // TODO: Adjust based on actual API response format for thinking
-
-        if (chunkText.includes('<thinking>')) {
-          inThinkingBlock = true
-          const parts = chunkText.split('<thinking>')
-          if (parts[0]) {
-            textContent += parts[0]
-            onChunk({
-              type: 'text',
-              content: textContent,
-              isPartial: true,
-            })
-          }
-          thinkingContent = parts[1] || ''
-        } else if (chunkText.includes('</thinking>')) {
-          inThinkingBlock = false
-          const parts = chunkText.split('</thinking>')
-          thinkingContent += parts[0] || ''
-
-          // Emit complete thinking block
-          onChunk({
-            type: 'thinking',
-            content: thinkingContent,
-            isPartial: false,
-          })
-
-          fullContent.push({
-            type: 'thinking',
-            thinking: thinkingContent,
-          })
-
-          thinkingContent = ''
-
-          if (parts[1]) {
-            textContent += parts[1]
-            onChunk({
-              type: 'text',
-              content: textContent,
-              isPartial: true,
-            })
-          }
-        } else if (inThinkingBlock) {
-          thinkingContent += chunkText
-          onChunk({
-            type: 'thinking',
-            content: thinkingContent,
-            isPartial: true,
-          })
-        } else {
-          textContent += chunkText
-          onChunk({
-            type: 'text',
-            content: textContent,
-            isPartial: true,
-          })
+      if (thinking) {
+        config.thinkingConfig = {
+          thinkingBudget: 32768,
         }
       }
 
-      // Add any remaining content
+      if (system) {
+        config.systemInstruction = system
+      }
+
+      const response = await this.client.models.generateContentStream({
+        model,
+        config,
+        contents: formattedMessages,
+      })
+
+      for await (const chunk of response) {
+        const parts = chunk.candidates?.[0]?.content?.parts
+        if (!parts) continue
+
+        for (const part of parts) {
+          if (!part.text) continue
+
+          if (part.thought) {
+            thinkingContent += part.text
+            onChunk({
+              type: 'thinking',
+              content: thinkingContent,
+              isPartial: true,
+            })
+          } else {
+            textContent += part.text
+            onChunk({
+              type: 'text',
+              content: textContent,
+              isPartial: true,
+            })
+          }
+        }
+      }
+
       if (thinkingContent) {
         fullContent.push({
           type: 'thinking',

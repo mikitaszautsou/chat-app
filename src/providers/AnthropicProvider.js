@@ -9,6 +9,7 @@ class AnthropicProvider extends BaseProvider {
       dangerouslyAllowBrowser: true, // Note: In production, use a backend proxy
     })
     this.models = [
+      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
       { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5' },
       { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4' },
       { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
@@ -26,18 +27,38 @@ class AnthropicProvider extends BaseProvider {
 
   /**
    * Convert our message format to Anthropic format
-   * Note: Only send text content back to API, not thinking blocks
+   * Preserves thinking blocks with signatures in assistant messages for multi-turn conversations
    */
   formatMessages(messages) {
-    return messages.map(msg => ({
-      role: msg.role,
-      content: typeof msg.content === 'string'
-        ? msg.content
-        : msg.content.filter(c => c.type === 'text').map(c => ({
-            type: 'text',
-            text: c.text
-          }))
-    }))
+    return messages.map(msg => {
+      if (typeof msg.content === 'string') {
+        return { role: msg.role, content: msg.content }
+      }
+
+      if (msg.role === 'assistant') {
+        // Include thinking blocks with signatures for multi-turn conversations
+        return {
+          role: msg.role,
+          content: msg.content
+            .filter(c => c.type === 'thinking' || c.type === 'text')
+            .map(c => {
+              if (c.type === 'thinking') {
+                return { type: 'thinking', thinking: c.thinking, signature: c.signature }
+              }
+              return { type: 'text', text: c.text }
+            })
+        }
+      }
+
+      // For user messages, only send text content
+      return {
+        role: msg.role,
+        content: msg.content.filter(c => c.type === 'text').map(c => ({
+          type: 'text',
+          text: c.text
+        }))
+      }
+    })
   }
 
   async sendMessage(messages, onChunk, options = {}) {
@@ -54,13 +75,15 @@ class AnthropicProvider extends BaseProvider {
     let fullContent = []
     let textContent = ''
     let thinkingContent = ''
+    let thinkingSignature = ''
 
-    // Determine if this is an Opus model for special configuration
+    // Determine if this model supports extended output (128k tokens)
     const isOpusModel = model.includes('opus')
+    const isExtendedModel = isOpusModel || model === 'claude-sonnet-4-6'
 
     // Configure max tokens and thinking budget based on model
-    const effectiveMaxTokens = isOpusModel ? 128000 : maxTokens
-    const thinkingBudget = isOpusModel ? 102400 : 16000
+    const effectiveMaxTokens = isExtendedModel ? 128000 : maxTokens
+    const thinkingBudget = isExtendedModel ? 102400 : 16000
 
     try {
       const requestConfig = {
@@ -84,12 +107,18 @@ class AnthropicProvider extends BaseProvider {
         }
       }
 
+      // Add output config for Opus models (max effort thinking)
+      if (isOpusModel) {
+        requestConfig.output_config = { effort: 'max' }
+      }
+
       const stream = await this.client.messages.create(requestConfig)
 
       for await (const event of stream) {
         if (event.type === 'content_block_start') {
           if (event.content_block.type === 'thinking') {
             thinkingContent = ''
+            thinkingSignature = ''
           } else if (event.content_block.type === 'text') {
             textContent = ''
           }
@@ -101,6 +130,8 @@ class AnthropicProvider extends BaseProvider {
               content: thinkingContent,
               isPartial: true,
             })
+          } else if (event.delta.type === 'signature_delta') {
+            thinkingSignature = event.delta.signature
           } else if (event.delta.type === 'text_delta') {
             textContent += event.delta.text
             onChunk({
@@ -114,6 +145,7 @@ class AnthropicProvider extends BaseProvider {
             fullContent.push({
               type: 'thinking',
               thinking: thinkingContent,
+              signature: thinkingSignature,
             })
             thinkingContent = '' // Reset after adding
           }

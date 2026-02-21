@@ -16,6 +16,7 @@
     "@anthropic-ai/sdk": "^0.71.2",
     "@emotion/react": "^11.11.3",
     "@emotion/styled": "^11.11.0",
+    "@google/genai": "^1.42.0",
     "@google/generative-ai": "^0.24.1",
     "@mui/icons-material": "^5.15.10",
     "@mui/material": "^5.15.10",
