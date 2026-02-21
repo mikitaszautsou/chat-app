@@ -40,7 +40,7 @@ class AnthropicProvider extends BaseProvider {
         return {
           role: msg.role,
           content: msg.content
-            .filter(c => c.type === 'thinking' || c.type === 'text')
+            .filter(c => c.type === 'text' || (c.type === 'thinking' && c.signature))
             .map(c => {
               if (c.type === 'thinking') {
                 return { type: 'thinking', thinking: c.thinking, signature: c.signature }
