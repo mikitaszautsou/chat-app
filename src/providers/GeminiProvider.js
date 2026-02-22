@@ -68,8 +68,9 @@ class GeminiProvider extends BaseProvider {
       }
 
       if (thinking) {
+        const isProModel = model.includes('pro')
         config.thinkingConfig = {
-          thinkingBudget: 32768,
+          thinkingBudget: isProModel ? 65535 : 32768,
         }
       }
 

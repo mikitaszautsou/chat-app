@@ -332,7 +332,7 @@ const MessageItem = memo(function MessageItem({
               )}
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 1 }}>
                 <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                  {new Date(message.timestamp).toLocaleTimeString()}
+                  {new Date(message.timestamp).toLocaleString()}
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 0.5 }}>
                   {hasMultipleBranches && (
@@ -603,6 +603,68 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
     }
     return currentChat.currentBranchPath[currentChat.currentBranchPath.length - 1]
   }
+
+  // Token estimation and cost calculation
+  const MODEL_PRICING = {
+    // Anthropic - per 1M tokens [input, output]
+    'claude-sonnet-4-6': [3, 15],
+    'claude-sonnet-4-5-20250929': [3, 15],
+    'claude-sonnet-4-20250514': [3, 15],
+    'claude-opus-4-6': [15, 75],
+    'claude-3-5-sonnet-20241022': [3, 15],
+    // Gemini - per 1M tokens [input, output]
+    'gemini-3.1-pro-preview': [1.25, 10],
+    'gemini-3-pro-preview': [1.25, 10],
+    'gemini-2.5-flash-preview-05-20': [0.15, 0.60],
+    'gemini-2.0-flash': [0.10, 0.40],
+    // DeepSeek - per 1M tokens [input, output]
+    'deepseek-chat': [0.27, 1.10],
+    'deepseek-reasoner': [0.55, 2.19],
+  }
+
+  const estimateTokens = useCallback((text) => {
+    if (!text) return 0
+    return Math.ceil(text.length / 4)
+  }, [])
+
+  const getMessageText = useCallback((content) => {
+    if (typeof content === 'string') return content
+    if (Array.isArray(content)) {
+      return content
+        .filter(block => block.type === 'text' || block.type === 'thinking')
+        .map(block => block.text || '')
+        .join('\n')
+    }
+    return ''
+  }, [])
+
+  const tokenEstimate = useMemo(() => {
+    if (!currentChat) return null
+
+    const model = currentChat.model || 'claude-sonnet-4-5-20250929'
+    const pricing = MODEL_PRICING[model]
+    if (!pricing) return null
+
+    // Calculate tokens for system prompt
+    let totalTokens = estimateTokens(currentChat.systemPrompt || '')
+
+    // Calculate tokens for all messages in current branch
+    const branchPath = currentChat.currentBranchPath || []
+    for (const id of branchPath) {
+      const msg = currentChat.messagesMap?.[id]
+      if (msg) {
+        totalTokens += estimateTokens(getMessageText(msg.content))
+      }
+    }
+
+    // Add current input message
+    totalTokens += estimateTokens(inputMessage)
+
+    const [inputPrice] = pricing
+    const cost = (totalTokens / 1_000_000) * inputPrice
+
+    return { tokens: totalTokens, cost }
+  }, [currentChat, inputMessage, estimateTokens, getMessageText])
 
   // Handle branching from a specific message
   const handleBranchFrom = useCallback(async (messageId) => {
@@ -979,7 +1041,7 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
   }, [])
 
   const handleSendMessage = useCallback(async (messageOverride) => {
-    const messageToSend = messageOverride || inputMessage
+    const messageToSend = (typeof messageOverride === 'string' ? messageOverride : null) || inputMessage
     if (!messageToSend.trim() || isLoading || !currentChat) return
 
     const userMessageId = generateId()
@@ -1405,6 +1467,13 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
       </Menu>
 
       <Paper sx={{ p: 2, borderRadius: 0 }} elevation={3}>
+        {tokenEstimate && (
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 0.5 }}>
+            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+              ~{tokenEstimate.tokens.toLocaleString()} tokens &middot; ~${tokenEstimate.cost < 0.01 ? tokenEstimate.cost.toFixed(4) : tokenEstimate.cost.toFixed(2)} input cost
+            </Typography>
+          </Box>
+        )}
         <Box sx={{ display: 'flex', gap: 1 }}>
           <TextField
             fullWidth
