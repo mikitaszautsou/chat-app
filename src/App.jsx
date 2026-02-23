@@ -3,6 +3,7 @@ import { ThemeProvider, createTheme } from '@mui/material/styles'
 import CssBaseline from '@mui/material/CssBaseline'
 import ChatsScreen from './components/ChatsScreen'
 import ChatScreen from './components/ChatScreen'
+import { chatsAPI } from './api/chats'
 
 // Provider-based color mapping
 const getProviderColor = (provider) => {
@@ -23,6 +24,7 @@ function App() {
   const [currentScreen, setCurrentScreen] = useState('chats')
   const [selectedChatId, setSelectedChatId] = useState(null)
   const [currentProvider, setCurrentProvider] = useState('anthropic')
+  const [isTemporaryChat, setIsTemporaryChat] = useState(false)
   const [themeMode, setThemeMode] = useState(() => {
     // Load theme preference from localStorage
     const savedTheme = localStorage.getItem('app-theme-mode')
@@ -77,14 +79,23 @@ function App() {
     setThemeMode((prevMode) => (prevMode === 'light' ? 'dark' : 'light'))
   }
 
-  const handleOpenChat = (chatId) => {
+  const handleOpenChat = (chatId, isTemporary) => {
     setSelectedChatId(chatId)
+    setIsTemporaryChat(!!isTemporary)
     setCurrentScreen('chat')
   }
 
-  const handleBackToChats = () => {
+  const handleBackToChats = async () => {
+    if (isTemporaryChat && selectedChatId) {
+      try {
+        await chatsAPI.delete(selectedChatId)
+      } catch (error) {
+        console.error('Error deleting temporary chat:', error)
+      }
+    }
     setCurrentScreen('chats')
     setSelectedChatId(null)
+    setIsTemporaryChat(false)
     setCurrentProvider('anthropic') // Reset to default when back to chats
   }
 

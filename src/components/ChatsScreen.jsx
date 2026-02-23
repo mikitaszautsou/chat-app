@@ -35,6 +35,7 @@ import Brightness4Icon from '@mui/icons-material/Brightness4'
 import Brightness7Icon from '@mui/icons-material/Brightness7'
 import PushPinIcon from '@mui/icons-material/PushPin'
 import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined'
+import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty'
 import { chatsAPI } from '../api/chats'
 import ProviderSettingsDialog from './ProviderSettingsDialog'
 import PromptsDialog from './PromptsDialog'
@@ -99,9 +100,9 @@ function ChatsScreen({ onChatClick, themeMode, onToggleTheme }) {
     return date.toLocaleDateString()
   }
 
-  const handleChatClick = (chatId) => {
+  const handleChatClick = (chat) => {
     if (onChatClick) {
-      onChatClick(chatId)
+      onChatClick(chat.id, chat.isTemporary)
     }
   }
 
@@ -122,6 +123,7 @@ function ChatsScreen({ onChatClick, themeMode, onToggleTheme }) {
       model: prompt.model,
       emoji: prompt.icon,
       systemPrompt: prompt.systemPrompt, // Store system prompt for API calls
+      ...(prompt.isTemporary && { isTemporary: true }),
     }
 
     try {
@@ -129,7 +131,7 @@ function ChatsScreen({ onChatClick, themeMode, onToggleTheme }) {
       setChats([newChat, ...chats])
       setPromptsDialogOpen(false)
       if (onChatClick) {
-        onChatClick(newChat.id)
+        onChatClick(newChat.id, newChat.isTemporary)
       }
     } catch (error) {
       console.error('Error creating new chat:', error)
@@ -394,7 +396,7 @@ function ChatsScreen({ onChatClick, themeMode, onToggleTheme }) {
                   </Box>
                 }
               >
-                <ListItemButton onClick={() => handleChatClick(chat.id)} sx={{ pr: 12 }}>
+                <ListItemButton onClick={() => handleChatClick(chat)} sx={{ pr: 12 }}>
                   <ListItemAvatar>
                     <Avatar sx={{ bgcolor: 'primary.main', fontSize: '1.5rem' }}>
                       {chat.emoji || <SmartToyIcon />}
@@ -412,6 +414,15 @@ function ChatsScreen({ onChatClick, themeMode, onToggleTheme }) {
                               fontSize: '1rem',
                               color: 'primary.main',
                               transform: 'rotate(45deg)',
+                              flexShrink: 0
+                            }}
+                          />
+                        )}
+                        {chat.isTemporary && (
+                          <HourglassEmptyIcon
+                            sx={{
+                              fontSize: '1rem',
+                              color: 'text.secondary',
                               flexShrink: 0
                             }}
                           />

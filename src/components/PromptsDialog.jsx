@@ -19,6 +19,8 @@ import {
   MenuItem,
   Select,
   FormControl,
+  FormControlLabel,
+  Checkbox,
   InputLabel,
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
@@ -32,6 +34,7 @@ import { createProvider, EmojiProvider } from '../providers'
 function PromptsDialog({ open, onClose, onSelectPrompt }) {
   const [prompts, setPrompts] = useState([])
   const [editingPrompt, setEditingPrompt] = useState(null)
+  const [isTemporary, setIsTemporary] = useState(false)
   const [formData, setFormData] = useState({
     title: '',
     icon: '💬',
@@ -132,8 +135,9 @@ function PromptsDialog({ open, onClose, onSelectPrompt }) {
 
   const handleSelectPrompt = (prompt) => {
     if (onSelectPrompt) {
-      onSelectPrompt(prompt)
+      onSelectPrompt({ ...prompt, isTemporary })
     }
+    setIsTemporary(false)
     onClose()
   }
 
@@ -295,6 +299,22 @@ function PromptsDialog({ open, onClose, onSelectPrompt }) {
                 </Box>
               ))}
             </List>
+
+            <Divider sx={{ my: 1 }} />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={isTemporary}
+                  onChange={(e) => setIsTemporary(e.target.checked)}
+                />
+              }
+              label={
+                <Typography variant="body2" color="text.secondary">
+                  Temporary chat (deleted on close)
+                </Typography>
+              }
+              sx={{ ml: 0.5 }}
+            />
 
             {prompts.length === 0 && (
               <Box sx={{ textAlign: 'center', py: 4 }}>

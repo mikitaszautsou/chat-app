@@ -36,6 +36,8 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import Brightness4Icon from '@mui/icons-material/Brightness4'
 import Brightness7Icon from '@mui/icons-material/Brightness7'
 import AccountTreeIcon from '@mui/icons-material/AccountTree'
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh'
+import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import remarkMath from 'remark-math'
@@ -666,6 +668,42 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
     return { tokens: totalTokens, cost }
   }, [currentChat, inputMessage, estimateTokens, getMessageText])
 
+  const totalSpent = useMemo(() => {
+    if (!currentChat) return null
+
+    const model = currentChat.model || 'claude-sonnet-4-5-20250929'
+    const pricing = MODEL_PRICING[model]
+    if (!pricing) return null
+
+    const [inputPrice, outputPrice] = pricing
+    const messagesMap = currentChat.messagesMap || {}
+    const systemTokens = estimateTokens(currentChat.systemPrompt || '')
+
+    let totalCost = 0
+    // Walk all assistant messages across all branches
+    for (const msg of Object.values(messagesMap)) {
+      if (msg.role !== 'assistant') continue
+
+      // Walk up the tree via parentId to collect all ancestor messages (the input context)
+      let inputTokens = systemTokens
+      let ancestorId = msg.parentId
+      while (ancestorId) {
+        const ancestor = messagesMap[ancestorId]
+        if (!ancestor) break
+        inputTokens += estimateTokens(getMessageText(ancestor.content))
+        ancestorId = ancestor.parentId
+      }
+
+      // Output: the assistant message itself
+      const outputTokens = estimateTokens(getMessageText(msg.content))
+
+      totalCost += (inputTokens / 1_000_000) * inputPrice
+      totalCost += (outputTokens / 1_000_000) * outputPrice
+    }
+
+    return totalCost
+  }, [currentChat, estimateTokens, getMessageText])
+
   // Handle branching from a specific message
   const handleBranchFrom = useCallback(async (messageId) => {
     if (!currentChat) return
@@ -757,6 +795,51 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
       handleSwitchToBranch(nodeId)
     }
   }, [currentChat, handleBranchFrom, handleSwitchToBranch])
+
+  const handleRegenerateTitle = useCallback(async () => {
+    if (!currentChat || isLoading) return
+
+    const branchPath = currentChat.currentBranchPath || []
+    if (branchPath.length === 0) return
+
+    // Gather chat content for context (first few messages)
+    const contextMessages = branchPath
+      .slice(0, 6)
+      .map(id => currentChat.messagesMap[id])
+      .filter(Boolean)
+      .map(msg => {
+        if (typeof msg.content === 'string') return msg.content
+        if (Array.isArray(msg.content)) {
+          return msg.content
+            .filter(b => b.type === 'text')
+            .map(b => b.text)
+            .join(' ')
+        }
+        return ''
+      })
+      .join('\n')
+
+    if (!contextMessages.trim()) return
+
+    try {
+      const emojiProvider = new EmojiProvider(import.meta.env.VITE_ANTHROPIC_API_KEY || 'dummy-key')
+
+      const [emoji, title] = await Promise.all([
+        emojiProvider.generateEmoji(contextMessages),
+        emojiProvider.generateTitle(contextMessages)
+      ])
+
+      const updatedChat = {
+        ...currentChat,
+        emoji,
+        title,
+      }
+
+      await updateChat(updatedChat)
+    } catch (error) {
+      console.error('Error regenerating title/emoji:', error)
+    }
+  }, [currentChat, isLoading, updateChat])
 
   const handleModelMenuOpen = useCallback((event) => {
     setModelMenuAnchor(event.currentTarget)
@@ -1163,8 +1246,8 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
         timestamp: new Date().toISOString(),
       }
 
-      // Generate emoji and title for first message (unless already set by prompt)
-      if (isFirstMessage && !currentChat.emoji) {
+      // Generate emoji and title for first message
+      if (isFirstMessage) {
         try {
           const emojiProvider = new EmojiProvider(import.meta.env.VITE_ANTHROPIC_API_KEY || 'dummy-key')
 
@@ -1284,9 +1367,35 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
             <ArrowBackIcon />
           </IconButton>
           <Box sx={{ ml: 2, flexGrow: 1 }}>
-            <Typography variant="h6">{currentChat.title}</Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <Typography variant="h6">{currentChat.title}</Typography>
+              <Tooltip title="Regenerate title & emoji">
+                <IconButton
+                  color="inherit"
+                  size="small"
+                  onClick={handleRegenerateTitle}
+                  disabled={isLoading || !currentChat.currentBranchPath?.length}
+                >
+                  <AutoFixHighIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Box>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Typography variant="caption">{currentChat.provider}</Typography>
+              {currentChat.isTemporary && (
+                <Chip
+                  icon={<HourglassEmptyIcon />}
+                  label="Temporary"
+                  size="small"
+                  sx={{
+                    height: '20px',
+                    fontSize: '0.7rem',
+                    bgcolor: 'rgba(255, 255, 255, 0.2)',
+                    color: 'white',
+                    '& .MuiChip-icon': { color: 'white', fontSize: '0.8rem' },
+                  }}
+                />
+              )}
               {currentChat.model && (
                 <Chip
                   label={availableModels.find(m => m.id === currentChat.model)?.name || currentChat.model}
@@ -1468,7 +1577,12 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
 
       <Paper sx={{ p: 2, borderRadius: 0 }} elevation={3}>
         {tokenEstimate && (
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 0.5 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+            {totalSpent > 0 ? (
+              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                total spent: ~${totalSpent < 0.01 ? totalSpent.toFixed(4) : totalSpent.toFixed(2)}
+              </Typography>
+            ) : <Box />}
             <Typography variant="caption" sx={{ color: 'text.secondary' }}>
               ~{tokenEstimate.tokens.toLocaleString()} tokens &middot; ~${tokenEstimate.cost < 0.01 ? tokenEstimate.cost.toFixed(4) : tokenEstimate.cost.toFixed(2)} input cost
             </Typography>
@@ -1486,7 +1600,6 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
                 handleSendMessage()
               }
             }}
-            disabled={isLoading}
             multiline
             maxRows={4}
           />
