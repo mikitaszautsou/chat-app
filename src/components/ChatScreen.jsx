@@ -9,6 +9,7 @@ import {
   Paper,
   Avatar,
   CircularProgress,
+  LinearProgress,
   Chip,
   Menu,
   MenuItem,
@@ -611,22 +612,33 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
 
   // Token estimation and cost calculation
   const MODEL_PRICING = {
-    // Anthropic - per 1M tokens [input, output]
-    'claude-sonnet-4-6': [3, 15],
-    'claude-sonnet-4-5-20250929': [3, 15],
-    'claude-sonnet-4-20250514': [3, 15],
-    'claude-opus-4-6': [15, 75],
-    'claude-3-5-sonnet-20241022': [3, 15],
-    // Gemini - per 1M tokens [input, output]
-    'gemini-3.1-pro-preview': [1.25, 10],
-    'gemini-3-pro-preview': [1.25, 10],
-    'gemini-2.5-flash-preview-05-20': [0.15, 0.60],
-    'gemini-2.0-flash': [0.10, 0.40],
-    // DeepSeek - per 1M tokens [input, output]
-    'deepseek-chat': [0.27, 1.10],
-    'deepseek-reasoner': [0.55, 2.19],
-    // Kimi (Moonshot) - per 1M tokens [input, output]
-    'kimi-k2.5': [0.60, 3.00],
+    // Anthropic - per 1M tokens [input, output, contextWindow]
+    'claude-sonnet-4-6': [3, 15, 200_000],
+    'claude-sonnet-4-5-20250929': [3, 15, 200_000],
+    'claude-sonnet-4-20250514': [3, 15, 200_000],
+    'claude-opus-4-6': [15, 75, 200_000],
+    'claude-3-5-sonnet-20241022': [3, 15, 200_000],
+    // Gemini - per 1M tokens [input, output, contextWindow]
+    'gemini-3.1-pro-preview': [1.25, 10, 1_000_000],
+    'gemini-3-pro-preview': [1.25, 10, 1_000_000],
+    'gemini-2.5-flash-preview-05-20': [0.15, 0.60, 1_000_000],
+    'gemini-2.0-flash': [0.10, 0.40, 1_000_000],
+    // DeepSeek - per 1M tokens [input, output, contextWindow]
+    'deepseek-chat': [0.27, 1.10, 64_000],
+    'deepseek-reasoner': [0.55, 2.19, 64_000],
+    // Kimi (Moonshot) - per 1M tokens [input, output, contextWindow]
+    'kimi-k2.5': [0.60, 3.00, 128_000],
+  }
+
+  const getContextColor = (percent) => {
+    if (percent >= 90) return '#f44336'
+    if (percent >= 75) return '#ff9800'
+    return '#4caf50'
+  }
+
+  const formatContextWindow = (tokens) => {
+    if (tokens >= 1_000_000) return `${tokens / 1_000_000}M`
+    return `${tokens / 1_000}K`
   }
 
   const estimateTokens = useCallback((text) => {
@@ -667,10 +679,11 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
     // Add current input message
     totalTokens += estimateTokens(inputMessage)
 
-    const [inputPrice] = pricing
+    const [inputPrice, , contextWindow] = pricing
     const cost = (totalTokens / 1_000_000) * inputPrice
+    const usagePercent = contextWindow ? Math.min((totalTokens / contextWindow) * 100, 100) : null
 
-    return { tokens: totalTokens, cost }
+    return { tokens: totalTokens, cost, contextWindow, usagePercent }
   }, [currentChat, inputMessage, estimateTokens, getMessageText])
 
   const totalSpent = useMemo(() => {
@@ -1590,6 +1603,24 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
       </Menu>
 
       <Paper sx={{ p: 2, borderRadius: 0 }} elevation={3}>
+        {tokenEstimate && tokenEstimate.usagePercent != null && (
+          <Tooltip title={`${tokenEstimate.tokens.toLocaleString()} / ${tokenEstimate.contextWindow.toLocaleString()} tokens used`} arrow>
+            <LinearProgress
+              variant="determinate"
+              value={tokenEstimate.usagePercent}
+              sx={{
+                height: 4,
+                mb: 0.5,
+                borderRadius: 2,
+                backgroundColor: 'action.hover',
+                '& .MuiLinearProgress-bar': {
+                  backgroundColor: getContextColor(tokenEstimate.usagePercent),
+                  borderRadius: 2,
+                },
+              }}
+            />
+          </Tooltip>
+        )}
         {tokenEstimate && (
           <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
             {totalSpent > 0 ? (
@@ -1599,6 +1630,9 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
             ) : <Box />}
             <Typography variant="caption" sx={{ color: 'text.secondary' }}>
               ~{tokenEstimate.tokens.toLocaleString()} tokens &middot; ~${tokenEstimate.cost < 0.01 ? tokenEstimate.cost.toFixed(4) : tokenEstimate.cost.toFixed(2)} input cost
+              {tokenEstimate.usagePercent != null && (
+                <> &middot; <span style={{ color: getContextColor(tokenEstimate.usagePercent) }}>{Math.round(tokenEstimate.usagePercent)}%</span> of {formatContextWindow(tokenEstimate.contextWindow)} context</>
+              )}
             </Typography>
           </Box>
         )}
