@@ -6,6 +6,7 @@ const PROVIDER_API_KEY_MAP = {
   anthropic: import.meta.env.VITE_ANTHROPIC_API_KEY,
   gemini: import.meta.env.VITE_GEMINI_API_KEY,
   deepseek: import.meta.env.VITE_DEEPSEEK_API_KEY,
+  kimi: import.meta.env.VITE_KIMI_API_KEY,
 };
 
 /**
@@ -46,6 +47,7 @@ export function getProviderDisplayName(providerName) {
     anthropic: 'Anthropic (Claude)',
     gemini: 'Google Gemini',
     deepseek: 'DeepSeek',
+    kimi: 'Kimi (Moonshot)',
   };
   return displayNames[providerName.toLowerCase()] || providerName;
 }

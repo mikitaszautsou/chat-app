@@ -625,6 +625,8 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
     // DeepSeek - per 1M tokens [input, output]
     'deepseek-chat': [0.27, 1.10],
     'deepseek-reasoner': [0.55, 2.19],
+    // Kimi (Moonshot) - per 1M tokens [input, output]
+    'kimi-k2.5': [0.60, 3.00],
   }
 
   const estimateTokens = useCallback((text) => {

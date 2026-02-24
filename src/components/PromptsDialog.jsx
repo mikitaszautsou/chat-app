@@ -184,6 +184,7 @@ function PromptsDialog({ open, onClose, onSelectPrompt }) {
                   <MenuItem value="Anthropic">Anthropic</MenuItem>
                   <MenuItem value="Gemini">Gemini</MenuItem>
                   <MenuItem value="DeepSeek">DeepSeek</MenuItem>
+                  <MenuItem value="Kimi">Kimi</MenuItem>
                 </Select>
               </FormControl>
 
