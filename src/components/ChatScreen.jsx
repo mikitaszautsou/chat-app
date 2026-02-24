@@ -50,6 +50,8 @@ import { EmojiProvider } from '../providers'
 import { chatsAPI } from '../api/chats'
 import { getApiKeyForProvider } from '../utils/providerUtils'
 import ConversationTree from './ConversationTree'
+import PopupChat from './PopupChat'
+import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline'
 
 // Generate unique ID for messages
 const generateId = () => {
@@ -448,6 +450,7 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
   const [messageToDelete, setMessageToDelete] = useState(null)
   const [collapsedMessages, setCollapsedMessages] = useState(new Set())
   const [treeDrawerOpen, setTreeDrawerOpen] = useState(false)
+  const [popupChatOpen, setPopupChatOpen] = useState(false)
   // messagesTopRef removed - no longer needed with reversed message order
 
   useEffect(() => {
@@ -1351,6 +1354,10 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
     return messages
   }, [currentChat])
 
+  const popupContextMessages = useMemo(() => {
+    return currentBranchMessages.map(m => ({ role: m.role, content: m.content }))
+  }, [currentBranchMessages])
+
   if (!currentChat) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
@@ -1418,6 +1425,11 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
           <Tooltip title="View Conversation Tree">
             <IconButton color="inherit" onClick={() => setTreeDrawerOpen(!treeDrawerOpen)}>
               <AccountTreeIcon />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Quick Chat">
+            <IconButton color="inherit" onClick={() => setPopupChatOpen(true)}>
+              <ChatBubbleOutlineIcon />
             </IconButton>
           </Tooltip>
           <IconButton color="inherit" onClick={onToggleTheme}>
@@ -1675,6 +1687,16 @@ function ChatScreen({ chatId, onBack, themeMode, onToggleTheme, onProviderChange
           </Box>
         </Box>
       </Drawer>
+
+      {popupChatOpen && (
+        <PopupChat
+          onClose={() => setPopupChatOpen(false)}
+          providerName={currentChat.provider.toLowerCase()}
+          model={currentChat.model}
+          systemPrompt={currentChat.systemPrompt}
+          contextMessages={popupContextMessages}
+        />
+      )}
     </Box>
   )
 }
